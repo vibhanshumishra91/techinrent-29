@@ -1,0 +1,13 @@
+{
+  "name": "TechInRent — LinkedIn Growth & B2B Lead Generation",
+  "short_name": "TechInRent",
+  "description": "Done-for-you LinkedIn outreach, B2B lead generation, account recovery and hiring support.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0A66C2",
+  "icons": [
+    { "src": "assets/android-chrome-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/android-chrome-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
