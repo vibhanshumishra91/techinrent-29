@@ -2,6 +2,8 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/admin", "destination": "/crm" }
+    { "source": "/admin", "destination": "/crm" },
+    { "source": "/blog/:slug/image", "destination": "/api/blog?slug=:slug&img=1" },
+    { "source": "/blog/:slug", "destination": "/api/blog?slug=:slug" }
   ]
 }
