@@ -116,7 +116,6 @@ function doLogin(e){
   return false;
 }
 function logout(){ logActivity('Logged out'); localStorage.removeItem(SESS_KEY); apiLogout(); render(); }
-function fillDemo(un,pw){ $('#li-user').value=un; $('#li-pass').value=pw; }
 
 /* ---------- demo bookings API (server-side, persistent) ---------- */
 let API_TOKEN = sessionStorage.getItem('tir_api_token') || null;
@@ -178,16 +177,18 @@ function loginView(){
     <div id="li-err" class="login-err hidden">Invalid username or password.</div>
     <form onsubmit="return doLogin(event)">
       <div class="fld"><label>Username</label><input id="li-user" autocomplete="username" required></div>
-      <div class="fld"><label>Password</label><input id="li-pass" type="password" autocomplete="current-password" required></div>
+      <div class="fld"><label>Password</label><div class="pw-wrap"><input id="li-pass" type="password" autocomplete="current-password" required><button type="button" class="pw-eye" aria-label="Show password" onclick="togglePw('li-pass',this)">👁</button></div></div>
       <button class="btn btn-primary btn-block" type="submit">Sign In →</button>
     </form>
-    <div class="demo-note">
-      <b>Accounts</b><br>
-      Manager: <button onclick="fillDemo('vibhanshu','mybaby')">vibhanshu / mybaby</button><br>
-      SDR (temp): <button onclick="fillDemo('aanya','sdr123')">aanya / sdr123</button> ·
-      <button onclick="fillDemo('rohit','sdr123')">rohit / sdr123</button>
-    </div>
   </div></div>`;
+}
+
+/* Toggle a password field's visibility (eye button) */
+function togglePw(id, btn){
+  const el = document.getElementById(id); if(!el) return;
+  const show = el.type === 'password';
+  el.type = show ? 'text' : 'password';
+  if(btn){ btn.textContent = show ? '🙈' : '👁'; btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password'); }
 }
 
 const MANAGER_NAV=[
@@ -469,10 +470,10 @@ function profileView(){
       <button class="btn btn-primary" onclick="saveProfile()">Save changes</button>
     </div></div>
     <div class="panel"><div class="panel-h"><h3>Change password</h3></div><div class="panel-b">
-      <div class="fld"><label>Current password</label><input id="pf-cur" type="password" placeholder="••••••"></div>
+      <div class="fld"><label>Current password</label><div class="pw-wrap"><input id="pf-cur" type="password" placeholder="••••••"><button type="button" class="pw-eye" aria-label="Show password" onclick="togglePw('pf-cur',this)">👁</button></div></div>
       <div class="grid-2c">
-        <div class="fld"><label>New password</label><input id="pf-new" type="password"></div>
-        <div class="fld"><label>Confirm new password</label><input id="pf-new2" type="password"></div>
+        <div class="fld"><label>New password</label><div class="pw-wrap"><input id="pf-new" type="password"><button type="button" class="pw-eye" aria-label="Show password" onclick="togglePw('pf-new',this)">👁</button></div></div>
+        <div class="fld"><label>Confirm new password</label><div class="pw-wrap"><input id="pf-new2" type="password"><button type="button" class="pw-eye" aria-label="Show password" onclick="togglePw('pf-new2',this)">👁</button></div></div>
       </div>
       <button class="btn btn-primary" onclick="changePassword()">Update password</button>
     </div></div>
@@ -545,9 +546,46 @@ function dailyView(){
       <div class="fld"><label>Meetings / demos</label><input id="dr-meet" type="number" min="0" value="0"></div>
     </div>
     <div class="fld"><label>Summary</label><textarea id="dr-sum" rows="3" placeholder="What did you accomplish today?"></textarea></div>
+    <div class="fld"><label>Call log screenshot (proof of total calls)</label>
+      <input id="dr-img" type="file" accept="image/*" onchange="handleDailyImg(this)">
+      <div id="dr-img-prev" style="margin-top:8px"></div>
+    </div>
     <button class="btn btn-primary" onclick="submitDaily()">Submit Report</button>
   </div></div>
-  <div class="panel"><div class="panel-h"><h3>My recent reports</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>Date</th><th>Calls</th><th>Meetings</th><th>Summary</th></tr></thead><tbody>${mine.map(r=>`<tr><td>${r.date}</td><td>${r.calls}</td><td>${r.meetings}</td><td>${esc(r.summary)}</td></tr>`).join('')||'<tr><td colspan="4"><div class="empty">No reports yet.</div></td></tr>'}</tbody></table></div></div>`;
+  <div class="panel"><div class="panel-h"><h3>My recent reports</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>Date</th><th>Calls</th><th>Meetings</th><th>Summary</th><th>Call proof</th></tr></thead><tbody>${mine.map(r=>`<tr><td>${r.date}</td><td>${r.calls}</td><td>${r.meetings}</td><td>${esc(r.summary)}</td><td>${r.image?`<img src="${r.image}" alt="call log" title="Click to view" style="height:36px;border-radius:6px;cursor:pointer;border:1px solid var(--line)" onclick="openDailyImg('${r.id}')">`:'<span class="t-meta">—</span>'}</td></tr>`).join('')||'<tr><td colspan="5"><div class="empty">No reports yet.</div></td></tr>'}</tbody></table></div></div>`;
+}
+
+/* Daily-report call-log image: compress client-side, keep in memory until submit */
+let _drImg=null;
+function _compressImg(file, cb){
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const img=new Image();
+    img.onload=function(){
+      const max=1200; let w=img.width, h=img.height;
+      if(w>max||h>max){ const s=Math.min(max/w,max/h); w=Math.round(w*s); h=Math.round(h*s); }
+      const c=document.createElement('canvas'); c.width=w; c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h);
+      cb(c.toDataURL('image/jpeg',0.7));
+    };
+    img.onerror=function(){ cb(null); };
+    img.src=e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+function handleDailyImg(input){
+  const f=input.files&&input.files[0];
+  if(!f){ _drImg=null; const p=$('#dr-img-prev'); if(p)p.innerHTML=''; return; }
+  if(!/^image\//.test(f.type)){ toast('Please select an image file'); input.value=''; _drImg=null; return; }
+  _compressImg(f,function(dataUrl){
+    if(!dataUrl){ toast('Could not read that image'); return; }
+    _drImg=dataUrl;
+    const p=$('#dr-img-prev'); if(p) p.innerHTML='<img src="'+dataUrl+'" alt="call log preview" style="max-width:180px;max-height:140px;border-radius:8px;border:1px solid var(--line)">';
+  });
+}
+function openDailyImg(id){
+  const r=db.dailyReports.find(x=>x.id===id); if(!r||!r.image) return;
+  modal(`<div class="modal" onclick="event.stopPropagation()"><div class="modal-h"><h3>Call log — ${esc(r.date)}</h3><button class="x" onclick="closeModal()">×</button></div><div class="modal-b" style="text-align:center"><img src="${r.image}" alt="call log" style="max-width:100%;border-radius:8px"></div></div>`);
 }
 
 function perfView(){
@@ -688,7 +726,7 @@ function saveBlog(e,id){ e.preventDefault(); const u=currentUser(); const title=
 
 function clockIn(){ const u=currentUser(); db.attendance.push({id:uid(),userId:u.id,date:todayStr(),clockIn:Date.now(),clockOut:null,status:'present'}); logActivity('Clocked in'); save(); renderContent(); toast('Clocked in'); }
 function clockOut(){ const u=currentUser(); const rec=db.attendance.find(a=>a.userId===u.id&&a.date===todayStr()&&!a.clockOut); if(rec){ rec.clockOut=Date.now(); logActivity('Clocked out'); save(); renderContent(); toast('Clocked out'); } }
-function submitDaily(){ const u=currentUser(); const calls=+$('#dr-calls').value||0,meetings=+$('#dr-meet').value||0,summary=$('#dr-sum').value.trim(); db.dailyReports.unshift({id:uid(),userId:u.id,date:todayStr(),calls,meetings,summary,ts:Date.now()}); logActivity(`Submitted daily report (${calls} calls, ${meetings} meetings)`); save(); renderContent(); toast('Report submitted'); }
+function submitDaily(){ const u=currentUser(); const calls=+$('#dr-calls').value||0,meetings=+$('#dr-meet').value||0,summary=$('#dr-sum').value.trim(); const image=_drImg||null; try { db.dailyReports.unshift({id:uid(),userId:u.id,date:todayStr(),calls,meetings,summary,image,ts:Date.now()}); save(); } catch(e){ db.dailyReports.shift(); toast('Image too large to store — try a smaller screenshot'); return; } _drImg=null; logActivity(`Submitted daily report (${calls} calls, ${meetings} meetings)`); renderContent(); toast('Report submitted'); }
 
 function saveSettings(){ db.settings={company:$('#set-company').value,currency:$('#set-cur').value,email:$('#set-email').value,phone:$('#set-phone').value}; logActivity('Updated CRM settings'); save(); toast('Settings saved'); }
 function markNotifs(){ db.notifications.forEach(n=>n.read=true); save(); render(); openNotifs(); }
