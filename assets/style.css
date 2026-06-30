@@ -256,6 +256,18 @@ p{margin:0 0 1rem}
 .topbar .tb-right{display:flex;gap:18px;align-items:center}
 @media (max-width:600px){.topbar .tb-left{display:none}.topbar .container{justify-content:center}}
 
+/* Partners page */
+.partners-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+.p-card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:26px 22px;text-align:center;box-shadow:var(--shadow);transition:.18s}
+.p-card:hover{transform:translateY(-3px);border-color:var(--blue)}
+.p-logo{width:84px;height:84px;object-fit:contain;border-radius:14px;margin:0 auto 14px;display:block;background:#f4f8fd;border:1px solid var(--line)}
+.p-logo-ph{display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.5rem;color:var(--blue)}
+.p-card h3{margin:0 0 8px;font-size:1.12rem}
+.p-card h3 a{color:var(--navy)}.p-card h3 a:hover{color:var(--blue)}
+.p-card p{color:var(--slate);font-size:.93rem;line-height:1.6;margin:0}
+@media (max-width:900px){.partners-grid{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:560px){.partners-grid{grid-template-columns:1fr}}
+
 /* Section intro spacing helper */
 .mt-38{margin-top:38px}
 

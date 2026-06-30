@@ -63,7 +63,7 @@
       <a href="blog.html">Blog</a>
       <a href="faq.html">FAQ</a>
       <a href="about.html">About</a>
-      <a href="contact.html">Contact</a>
+      <a href="partners.html">Partners</a><a href="contact.html">Contact</a>
     </nav>
     <div class="nav-cta">
       <a class="btn btn-ghost" href="tel:+917898711748">Call Now</a>
@@ -84,7 +84,7 @@
 
 <section class="section">
   <div class="container">
-    <div class="blog-grid">
+    <div class="blog-grid" id="blog-grid">
 
       <a class="post-card" href="blog-linkedin-lead-generation-guide.html">
         <div class="post-thumb">🎯</div>
@@ -155,5 +155,22 @@
 
 <a class="wa-float" href="https://wa.me/917898711748" target="_blank" rel="noopener" aria-label="Chat on WhatsApp">🟢</a>
 <script src="assets/main.js"></script>
+<script>
+/* Prepend admin-published posts (server-rendered at /blog/<slug>) above the static ones. */
+(function(){
+  var grid=document.getElementById('blog-grid'); if(!grid) return;
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  fetch('/api/posts').then(function(r){return r.json();}).then(function(d){
+    var posts=(d&&d.posts)||[]; if(!posts.length) return;
+    var first=grid.firstElementChild;
+    posts.forEach(function(p){
+      var a=document.createElement('a'); a.className='post-card'; a.href='/blog/'+p.slug;
+      var thumb='<div class="post-thumb" style="padding:0;overflow:hidden"><img src="/blog/'+esc(p.slug)+'/image" alt="'+esc(p.title)+'" loading="lazy" style="width:100%;height:100%;object-fit:cover"></div>';
+      a.innerHTML=thumb+'<div class="post-body"><span class="cat">'+esc((p.keywords||'Article').split(',')[0].trim()||'Article')+'</span><h3>'+esc(p.title)+'</h3><p>'+esc(p.excerpt||'')+'</p><span class="post-meta">Read article →</span></div>';
+      grid.insertBefore(a, first);
+    });
+  }).catch(function(){});
+})();
+</script>
 </body>
 </html>

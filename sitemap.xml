@@ -2,6 +2,7 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://techinrent.com/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
   <url><loc>https://techinrent.com/services</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://techinrent.com/partners</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>
   <url><loc>https://techinrent.com/linkedin-account-management</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
   <url><loc>https://techinrent.com/linkedin-lead-generation</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>
   <url><loc>https://techinrent.com/linkedin-b2b-lead-generation</loc><changefreq>monthly</changefreq><priority>0.9</priority></url>

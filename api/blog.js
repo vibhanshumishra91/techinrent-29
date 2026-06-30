@@ -94,7 +94,7 @@ ${post.keywords ? `<meta name="keywords" content="${esc(post.keywords)}">` : ''}
   <article class="container" style="max-width:760px">
     <p style="color:var(--blue);font-weight:700;text-transform:uppercase;letter-spacing:.04em;font-size:.8rem;margin-bottom:10px"><a href="/blog.html" style="color:var(--blue)">← Blog</a> · ${esc(dateLabel)}</p>
     <h1 style="font-size:2.2rem;line-height:1.15;margin:0 0 18px">${esc(post.title)}</h1>
-    ${post.featuredImage ? `<img src="${url}/image" alt="${esc(post.title)}" style="width:100%;border-radius:16px;margin:8px 0 24px;border:1px solid var(--line)">` : ''}
+    <img src="${url}/image" alt="${esc(post.title)}" style="width:100%;max-height:420px;object-fit:cover;border-radius:16px;margin:8px 0 24px;border:1px solid var(--line)">
     <div class="post-body" style="font-size:1.06rem;line-height:1.8;color:#1f2a37">${post.body || ''}</div>
     <div style="margin-top:40px;padding:24px;background:#f4f8fd;border:1px solid var(--line);border-radius:16px;text-align:center">
       <h3 style="margin:0 0 8px">Want results like these on your LinkedIn?</h3>

@@ -264,7 +264,7 @@ const MANAGER_NAV=[
   {g:'Overview',items:[['dashboard','📊','Dashboard']]},
   {g:'Sales',items:[['bookings','📅','Demo Bookings'],['leads','🎯','Lead Management'],['pipeline','🔀','Sales Pipeline'],['inquiries','📥','Website Inquiries']]},
   {g:'Team',items:[['users','👥','SDR / Users'],['attendance','🕘','Attendance'],['activity','📜','Activity Logs']]},
-  {g:'Content',items:[['blog','📝','Blog Management']]},
+  {g:'Content',items:[['blog','📝','Blog Management'],['partners','🤝','Partners']]},
   {g:'Insights',items:[['reports','📈','Reports & Analytics']]},
   {g:'System',items:[['profile','👤','My Profile'],['settings','⚙️','CRM Settings']]}
 ];
@@ -272,14 +272,13 @@ const SDR_NAV=[
   {g:'Overview',items:[['dashboard','📊','My Dashboard']]},
   {g:'Sales',items:[['myleads','🎯','My Leads']]},
   {g:'My Day',items:[['attendance','🕘','Attendance & Time'],['daily','🗒️','Daily Report']]},
-  {g:'Content',items:[['blog','📝','Blog Posts']]},
   {g:'Me',items:[['performance','🏆','My Performance'],['profile','👤','My Profile']]}
 ];
 
 function appShell(u){
   const nav = u.role==='manager'?MANAGER_NAV:SDR_NAV;
   const unread = db.notifications.filter(n=>!n.read).length;
-  const pendingBlogs = db.blogPosts.filter(b=>b.status==='pending').length;
+  const pendingBlogs = 0;
   let navHtml='';
   nav.forEach(grp=>{
     navHtml+=`<div class="nav-group">${grp.g}</div>`;
@@ -321,14 +320,14 @@ function toggleSidebar(){ S.sidebarOpen=!S.sidebarOpen; const sb=$('#sidebar'); 
 
 function renderContent(){
   const u=currentUser(); if(!u) return;
-  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',inquiries:'Website Inquiries',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',activity:'Activity Logs',blog:'Blog Management',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',performance:'My Performance',profile:'My Profile'};
+  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',inquiries:'Website Inquiries',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',activity:'Activity Logs',blog:'Blog Management',partners:'Partners & Clients',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',performance:'My Performance',profile:'My Profile'};
   const tt=$('#view-title'); if(tt) tt.textContent=titles[S.view]||'';
   const c=$('#content'); if(!c) return;
-  const allowedSDR=['dashboard','myleads','attendance','daily','blog','performance','profile'];
+  const allowedSDR=['dashboard','myleads','attendance','daily','performance','profile'];
   if(u.role==='sdr' && !allowedSDR.includes(S.view)) S.view='dashboard';
   let html='';
   if(u.role==='manager'){
-    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,inquiries:inquiriesView,users:usersView,attendance:mgrAttendance,activity:activityView,blog:blogView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
+    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,inquiries:inquiriesView,users:usersView,attendance:mgrAttendance,activity:activityView,blog:blogView,partners:partnersView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
   } else {
     html=({dashboard:sdrDashboard,myleads:()=>leadsView(true),attendance:sdrAttendance,daily:dailyView,blog:blogView,performance:perfView,profile:profileView}[S.view]||sdrDashboard)();
   }
@@ -466,17 +465,30 @@ function activityView(){
   <div class="panel-b"><ul class="timeline">${db.activityLogs.slice(0,40).map(a=>`<li><div class="t-txt">${esc(a.action)}</div><div class="t-meta">${esc(userName(a.userId))} · ${fmtT(a.ts)}</div></li>`).join('')}</ul></div></div>`;
 }
 
+let POSTS=[];
 function blogView(){
-  const u=currentUser(); const mgr=u.role==='manager';
-  let posts=db.blogPosts.slice().sort((a,b)=>b.createdAt-a.createdAt);
-  if(!mgr) posts=posts.filter(p=>p.authorId===u.id);
-  return `<div class="toolbar"><div class="spacer"></div><button class="btn btn-primary btn-sm" onclick="openBlogForm()">+ New Post</button></div>
-  <p style="color:var(--muted);margin:-6px 0 14px">${mgr?'Review and approve SDR submissions, or publish your own posts.':'Drafts you submit go to your manager for approval before they are published.'}</p>
-  <div class="panel"><div class="table-scroll"><table class="tbl">
-  <thead><tr><th>Title</th><th>Author</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
-  <tbody>${posts.length?posts.map(p=>`<tr><td class="nm">${esc(p.title)}</td><td>${esc(userName(p.authorId))}</td><td><span class="tag tag-${p.status==='published'?'pub':p.status==='pending'?'pending':'draft'}">${p.status}</span></td><td>${fmt(p.createdAt)}</td>
-  <td><button class="btn btn-ghost btn-sm" onclick="openBlogForm('${p.id}')">${(mgr||p.status!=='published')?'Edit':'View'}</button> ${mgr&&p.status==='pending'?`<button class="btn btn-primary btn-sm" onclick="approveBlog('${p.id}')">Approve</button> <button class="btn btn-danger btn-sm" onclick="rejectBlog('${p.id}')">Reject</button>`:''} ${mgr?`<button class="btn btn-danger btn-sm" onclick="deleteBlog('${p.id}')">Del</button>`:''}</td></tr>`).join(''):`<tr><td colspan="5"><div class="empty">No posts yet.</div></td></tr>`}</tbody>
-  </table></div></div>`;
+  setTimeout(loadPosts,0);
+  return `<div class="toolbar"><p style="margin:0;color:var(--muted)">SEO blog posts publish live at <b>techinrent.com/blog/&lt;slug&gt;</b> with full meta tags.</p><div class="spacer"></div><button class="btn btn-primary btn-sm" onclick="openBlogForm()">+ New Post</button></div>
+  <div id="posts-root"><div class="empty">Loading posts…</div></div>`;
+}
+async function loadPosts(){
+  const root=document.getElementById('posts-root'); if(!root) return;
+  try{ const j=await apiReq('/api/posts','GET'); POSTS=j.posts||[]; root.innerHTML=postsTableHTML(); }
+  catch(e){ if(e.message!=='unauth') root.innerHTML='<div class="empty">Could not load posts: '+esc(e.message)+'</div>'; }
+}
+function postsTableHTML(){
+  const rows = POSTS.length ? POSTS.map(p=>`<tr>
+    <td class="nm">${esc(p.title)}<div class="sub">/blog/${esc(p.slug)}</div></td>
+    <td><span class="tag tag-${p.status==='published'?'pub':'draft'}">${p.status}</span></td>
+    <td>${fmt(p.publishedAt||p.createdAt)}</td>
+    <td>
+      <button class="btn btn-ghost btn-sm" onclick="openBlogForm('${p.id}')">Edit</button>
+      ${p.status==='published'?`<a class="btn btn-ghost btn-sm" href="/blog/${esc(p.slug)}" target="_blank" rel="noopener">View live ↗</a>`:''}
+      <button class="btn btn-danger btn-sm" onclick="deleteBlog('${p.id}')">Del</button>
+    </td></tr>`).join('') : `<tr><td colspan="4"><div class="empty">No posts yet. Click “+ New Post” to publish your first SEO article.</div></td></tr>`;
+  return `<div class="panel"><div class="table-scroll"><table class="tbl">
+    <thead><tr><th>Title</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
 }
 
 function reportsView(){
@@ -744,19 +756,112 @@ function openUserForm(id){
   </div>`);
 }
 
-function openBlogForm(id){
-  const u=currentUser(); const mgr=u.role==='manager';
-  const p=id?db.blogPosts.find(x=>x.id===id):null;
-  const readOnly = p && !mgr && p.status==='published';
-  modal(`<div class="modal" onclick="event.stopPropagation()">
-    <div class="modal-h"><h3>${p?(readOnly?'View post':'Edit post'):'New blog post'}</h3><button class="x" onclick="closeModal()">×</button></div>
+/* Authenticated JSON request helper (used by posts + partners). */
+async function apiReq(path, method, payload){
+  const r=await fetch(path,{method:method||'GET',headers:Object.assign({Authorization:'Bearer '+API_TOKEN}, payload?{'Content-Type':'application/json'}:{}),body:payload?JSON.stringify(payload):undefined});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===401){ toast('Session expired — sign in again'); logout(); throw new Error('unauth'); }
+  if(!r.ok) throw new Error(j.error||'Request failed');
+  return j;
+}
+
+/* ---------- Blog editor (server-backed, SEO + featured image) ---------- */
+let _postImg=undefined; // undefined = unchanged, '' = removed, dataURL = new
+async function openBlogForm(id){
+  _postImg=undefined;
+  let p=null;
+  if(id){
+    const meta=POSTS.find(x=>x.id===id);
+    try{ const j=await apiReq('/api/posts?slug='+encodeURIComponent(meta?meta.slug:''),'GET'); p=j.post; }catch(e){ if(e.message!=='unauth') toast(e.message); return; }
+  }
+  modal(`<div class="modal" onclick="event.stopPropagation()" style="max-width:680px">
+    <div class="modal-h"><h3>${p?'Edit post':'New blog post'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <form onsubmit="return saveBlog(event,'${id||''}')"><div class="modal-b">
-      <div class="fld"><label>Title</label><input id="bf-title" value="${p?esc(p.title):''}" ${readOnly?'disabled':''} required></div>
-      <div class="fld"><label>Content</label><textarea id="bf-body" rows="8" ${readOnly?'disabled':''}>${p?esc(p.body):''}</textarea></div>
-      ${!mgr?'<p class="t-meta">Submitting sends this post to your manager for approval.</p>':''}
-    </div><div class="modal-f"><button type="button" class="btn btn-ghost" onclick="closeModal()">Close</button>${readOnly?'':`<button type="submit" class="btn btn-primary">${mgr?'Save & Publish':'Submit for Approval'}</button>`}</div></form>
+      <div class="fld"><label>Title *</label><input id="bf-title" value="${p?esc(p.title):''}" required></div>
+      <div class="fld"><label>Featured image <span class="t-meta">(optional — a default is used if you skip it)</span></label>
+        <input id="bf-img" type="file" accept="image/*" onchange="handlePostImg(this)">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="clearPostImg()" style="margin-top:6px">Remove image</button>
+        <div id="bf-img-prev" style="margin-top:8px">${p&&p.featuredImage?`<img src="/blog/${esc(p.slug)}/image" alt="" style="max-width:200px;max-height:130px;border-radius:8px;border:1px solid var(--line)">`:''}</div>
+      </div>
+      <div class="fld"><label>Content (HTML allowed — &lt;h2&gt;, &lt;p&gt;, &lt;ul&gt;…)</label><textarea id="bf-body" rows="9">${p?esc(p.body):''}</textarea></div>
+      <details style="margin:4px 0 10px"><summary style="cursor:pointer;font-weight:700;color:var(--slate)">SEO settings</summary>
+        <div style="padding-top:10px">
+          <div class="fld"><label>URL slug <span class="t-meta">(auto from title if blank)</span></label><input id="bf-slug" value="${p?esc(p.slug):''}" placeholder="my-post-url"></div>
+          <div class="fld"><label>Meta title <span class="t-meta">(≤60 chars; defaults to title)</span></label><input id="bf-mt" value="${p?esc(p.metaTitle||''):''}" maxlength="70"></div>
+          <div class="fld"><label>Meta description <span class="t-meta">(≤160 chars)</span></label><textarea id="bf-md" rows="2" maxlength="180">${p?esc(p.metaDescription||''):''}</textarea></div>
+          <div class="fld"><label>Keywords <span class="t-meta">(comma separated)</span></label><input id="bf-kw" value="${p?esc(p.keywords||''):''}"></div>
+        </div>
+      </details>
+      <div class="fld"><label>Status</label><select id="bf-status"><option value="published" ${(!p||p.status==='published')?'selected':''}>Published (live)</option><option value="draft" ${p&&p.status==='draft'?'selected':''}>Draft</option></select></div>
+    </div><div class="modal-f"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button><button type="submit" class="btn btn-primary">${p?'Save changes':'Publish post'}</button></div></form>
   </div>`);
 }
+function handlePostImg(input){
+  const f=input.files&&input.files[0]; if(!f){ return; }
+  if(!/^image\//.test(f.type)){ toast('Please choose an image'); input.value=''; return; }
+  _compressImg(f,function(d){ if(!d){ toast('Could not read image'); return; } _postImg=d; const pv=$('#bf-img-prev'); if(pv) pv.innerHTML='<img src="'+d+'" alt="" style="max-width:200px;max-height:130px;border-radius:8px;border:1px solid var(--line)">'; });
+}
+function clearPostImg(){ _postImg=''; const pv=$('#bf-img-prev'); if(pv) pv.innerHTML='<span class="t-meta">No image — a default will be used.</span>'; const i=$('#bf-img'); if(i) i.value=''; }
+function saveBlog(e,id){
+  e.preventDefault();
+  const payload={ title:$('#bf-title').value.trim(), body:$('#bf-body').value, slug:$('#bf-slug').value.trim()||undefined,
+    metaTitle:$('#bf-mt').value.trim(), metaDescription:$('#bf-md').value.trim(), keywords:$('#bf-kw').value.trim(), status:$('#bf-status').value };
+  if(_postImg!==undefined) payload.featuredImage=_postImg;
+  if(id) payload.id=id;
+  (async()=>{ try{ await apiReq('/api/posts', id?'PATCH':'POST', payload); closeModal(); loadPosts(); toast('Post saved'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })();
+  return false;
+}
+function deleteBlog(id){ if(!confirm('Delete this post permanently?'))return; (async()=>{ try{ await apiReq('/api/posts','DELETE',{id}); loadPosts(); toast('Post deleted'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })(); }
+
+/* ---------- Partners (manager) ---------- */
+let PARTNERS=[]; let _partnerLogo=undefined;
+function partnersView(){
+  setTimeout(loadPartners,0);
+  return `<div class="toolbar"><p style="margin:0;color:var(--muted)">These appear on the public <b>techinrent.com/partners</b> page.</p><div class="spacer"></div><button class="btn btn-primary btn-sm" onclick="openPartnerForm()">+ Add Partner</button></div>
+  <div id="partners-root"><div class="empty">Loading partners…</div></div>`;
+}
+async function loadPartners(){
+  const root=document.getElementById('partners-root'); if(!root) return;
+  try{ const r=await fetch('/api/partners'); const j=await r.json(); PARTNERS=j.partners||[]; root.innerHTML=partnersTableHTML(); }
+  catch(e){ root.innerHTML='<div class="empty">Could not load partners.</div>'; }
+}
+function partnersTableHTML(){
+  const rows=PARTNERS.length?PARTNERS.map(p=>`<tr>
+    <td>${p.logo?`<img src="${p.logo}" alt="" style="height:38px;width:38px;object-fit:contain;border-radius:8px;border:1px solid var(--line)">`:'<span class="t-meta">—</span>'}</td>
+    <td class="nm">${esc(p.name)}</td>
+    <td>${esc((p.blurb||'').slice(0,60))}${(p.blurb||'').length>60?'…':''}</td>
+    <td>${p.link?`<a href="${esc(p.link)}" target="_blank" rel="noopener">link ↗</a>`:'—'}</td>
+    <td><button class="btn btn-ghost btn-sm" onclick="openPartnerForm('${p.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deletePartner('${p.id}')">Del</button></td>
+  </tr>`).join(''):`<tr><td colspan="5"><div class="empty">No partners yet. Add your first partner to show it on the website.</div></td></tr>`;
+  return `<div class="panel"><div class="table-scroll"><table class="tbl"><thead><tr><th>Logo</th><th>Name</th><th>Blurb</th><th>Link</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+function openPartnerForm(id){
+  _partnerLogo=undefined;
+  const p=id?PARTNERS.find(x=>x.id===id):null;
+  modal(`<div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-h"><h3>${p?'Edit partner':'Add partner'}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <form onsubmit="return savePartner(event,'${id||''}')"><div class="modal-b">
+      <div class="fld"><label>Partner name *</label><input id="pf-name2" value="${p?esc(p.name):''}" required></div>
+      <div class="fld"><label>Logo</label><input id="pf-logo" type="file" accept="image/*" onchange="handlePartnerLogo(this)"><div id="pf-logo-prev" style="margin-top:8px">${p&&p.logo?`<img src="${p.logo}" alt="" style="max-width:120px;max-height:90px;border-radius:8px;border:1px solid var(--line)">`:''}</div></div>
+      <div class="fld"><label>Short blurb <span class="t-meta">(what you sell for them)</span></label><textarea id="pf-blurb" rows="2" maxlength="300">${p?esc(p.blurb||''):''}</textarea></div>
+      <div class="fld"><label>Website link <span class="t-meta">(optional)</span></label><input id="pf-link" value="${p?esc(p.link||''):''}" placeholder="https://"></div>
+    </div><div class="modal-f"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div></form>
+  </div>`);
+}
+function handlePartnerLogo(input){
+  const f=input.files&&input.files[0]; if(!f) return;
+  if(!/^image\//.test(f.type)){ toast('Please choose an image'); input.value=''; return; }
+  _compressImg(f,function(d){ if(!d){ toast('Could not read image'); return; } _partnerLogo=d; const pv=$('#pf-logo-prev'); if(pv) pv.innerHTML='<img src="'+d+'" alt="" style="max-width:120px;max-height:90px;border-radius:8px;border:1px solid var(--line)">'; });
+}
+function savePartner(e,id){
+  e.preventDefault();
+  const payload={ name:$('#pf-name2').value.trim(), blurb:$('#pf-blurb').value.trim(), link:$('#pf-link').value.trim() };
+  if(_partnerLogo!==undefined) payload.logo=_partnerLogo;
+  if(id) payload.id=id;
+  (async()=>{ try{ await apiReq('/api/partners', id?'PATCH':'POST', payload); closeModal(); loadPartners(); toast('Partner saved'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })();
+  return false;
+}
+function deletePartner(id){ if(!confirm('Remove this partner?'))return; (async()=>{ try{ await apiReq('/api/partners','DELETE',{id}); loadPartners(); toast('Partner removed'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })(); }
 
 function openNotifs(){
   modal(`<div class="modal" onclick="event.stopPropagation()" style="max-width:460px">
@@ -811,13 +916,6 @@ function deleteUser(id){
   if(!confirm(`Delete ${u.name}? Their leads will become unassigned.`)) return;
   (async()=>{ try{ await apiUsers('DELETE',{id}); db.leads.forEach(l=>{ if(l.ownerId===id) l.ownerId=null; }); logActivity(`Deleted SDR "${u.name}"`); await syncUsers(); renderContent(); toast('SDR deleted'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })();
 }
-
-function approveBlog(id){ const p=db.blogPosts.find(x=>x.id===id); p.status='published'; logActivity(`Approved blog "${p.title}"`); save(); renderContent(); toast('Published'); }
-function rejectBlog(id){ const p=db.blogPosts.find(x=>x.id===id); p.status='rejected'; logActivity(`Rejected blog "${p.title}"`); save(); renderContent(); toast('Rejected'); }
-function deleteBlog(id){ const p=db.blogPosts.find(x=>x.id===id); if(!confirm('Delete this post?'))return; db.blogPosts=db.blogPosts.filter(x=>x.id!==id); save(); renderContent(); }
-function saveBlog(e,id){ e.preventDefault(); const u=currentUser(); const title=$('#bf-title').value.trim(),body=$('#bf-body').value.trim(); if(id){ const p=db.blogPosts.find(x=>x.id===id); p.title=title;p.body=body; if(u.role!=='manager')p.status='pending'; }
-  else { const status=u.role==='manager'?'published':'pending'; db.blogPosts.unshift({id:uid(),title,body,authorId:u.id,status,createdAt:Date.now()}); if(u.role!=='manager'){ db.notifications.unshift({id:uid(),ts:Date.now(),text:`${u.name} submitted a blog post for approval`,read:false}); } logActivity(`Created blog "${title}"`); }
-  save(); closeModal(); renderContent(); toast(u.role==='manager'?'Saved':'Submitted for approval'); return false; }
 
 function clockIn(){ const u=currentUser(); db.attendance.push({id:uid(),userId:u.id,date:todayStr(),clockIn:Date.now(),clockOut:null,status:'present'}); logActivity('Clocked in'); save(); renderContent(); toast('Clocked in'); }
 function clockOut(){ const u=currentUser(); const rec=db.attendance.find(a=>a.userId===u.id&&a.date===todayStr()&&!a.clockOut); if(rec){ rec.clockOut=Date.now(); logActivity('Clocked out'); save(); renderContent(); toast('Clocked out'); } }
