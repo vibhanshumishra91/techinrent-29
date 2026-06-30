@@ -55,11 +55,12 @@ function makeLead(o){ const now=Date.now(); return {
   createdAt:o.ts||now }; }
 
 function seed(){
-  // Manager password is NOT stored client-side — it lives only in the server env
-  // (ADMIN_PASSWORD) and is validated via /api/admin-login, so it never leaks in page source.
-  const u1={id:'u1',name:'Vibhanshu',username:'Vibhanshu',password:'',role:'manager',email:'vibhanshu@techinrent.com',status:'active'};
-  const u2={id:'u2',name:'Priyanka',username:'Priyanka',password:'Techinrent2026',role:'sdr',email:'priyanka@techinrent.com',status:'active'};
-  const u3={id:'u3',name:'Vedant',username:'Vedant',password:'Techinrent2026',role:'sdr',email:'vedant@techinrent.com',status:'active'};
+  // No passwords are stored client-side. Every account is authenticated server-side
+  // via /api/admin-login against scrypt-hashed credentials. These records exist only
+  // for display/lead-ownership until the server user list is synced after login.
+  const u1={id:'u1',name:'Vibhanshu',username:'Vibhanshu',role:'manager',email:'vibhanshu@techinrent.com',status:'active'};
+  const u2={id:'u2',name:'Priyanka',username:'Priyanka',role:'sdr',email:'priyanka@techinrent.com',status:'active'};
+  const u3={id:'u3',name:'Vedant',username:'Vedant',role:'sdr',email:'vedant@techinrent.com',status:'active'};
   const D=Date.now(), day=86400000;
   const leads=[
     {...makeLead({name:'Priya Nair',email:'priya@nimbussaas.com',phone:'+91 90000 11111',company:'Nimbus SaaS',service:'Lead Generation',source:'Website',stage:'Qualified',ownerId:'u2',value:1200,ts:D-6*day}),followUpAt:D+1*day},
@@ -106,16 +107,18 @@ let db = load();
 // migration: apply the configured manager + SDR accounts to existing installs
 // (keeps the u1/u2/u3 ids so lead ownership stays intact). Runs once.
 (function(){
-  if (db._acctV3) return;
-  function setU(id,name,username,password,role,email){
+  if (db._acctV4) return;
+  function setU(id,name,username,role,email){
     var u = db.users.find(function(x){ return x.id===id; });
-    if (u){ u.name=name; u.username=username; u.password=password; u.role=role; if(email) u.email=email; u.status='active'; }
-    else { db.users.push({id:id,name:name,username:username,password:password,role:role,email:email||'',status:'active'}); }
+    if (u){ u.name=name; u.username=username; u.role=role; if(email) u.email=email; u.status='active'; delete u.password; }
+    else { db.users.push({id:id,name:name,username:username,role:role,email:email||'',status:'active'}); }
   }
-  setU('u1','Vibhanshu','Vibhanshu','','manager','vibhanshu@techinrent.com');     // password = server-side only
-  setU('u2','Priyanka','Priyanka','Techinrent2026','sdr','priyanka@techinrent.com');
-  setU('u3','Vedant','Vedant','Techinrent2026','sdr','vedant@techinrent.com');
-  db._acctV3 = true; save();
+  setU('u1','Vibhanshu','Vibhanshu','manager','vibhanshu@techinrent.com');
+  setU('u2','Priyanka','Priyanka','sdr','priyanka@techinrent.com');
+  setU('u3','Vedant','Vedant','sdr','vedant@techinrent.com');
+  // strip any leftover client-side passwords from older installs
+  db.users.forEach(function(u){ delete u.password; });
+  db._acctV4 = true; save();
 })();
 
 function mergeInbox(){
@@ -144,22 +147,21 @@ function startSession(u){
 }
 function doLogin(e){
   e.preventDefault();
-  const un=$('#li-user').value.trim(), pw=$('#li-pass').value, lc=un.toLowerCase();
-  // SDR / staff accounts are validated locally (username case-insensitive).
-  const sdr=db.users.find(x=> x.role!=='manager' && x.username.toLowerCase()===lc && x.password===pw);
-  if(sdr){
-    if(sdr.status==='inactive') return loginErr('This account is inactive. Contact your manager.');
-    startSession(sdr); return false;
-  }
-  // Manager is validated server-side — the password is never stored in this file.
-  const mgr=db.users.find(x=> x.role==='manager' && x.username.toLowerCase()===lc);
-  if(mgr){
-    if(mgr.status==='inactive') return loginErr('This account is inactive.');
-    const btn=$('#li-err'); if(btn) btn.classList.add('hidden');
-    apiLogin(mgr.username, pw).then(ok=>{ ok ? startSession(mgr) : loginErr('Invalid username or password.'); });
-    return false;
-  }
-  return loginErr('Invalid username or password.');
+  const un=$('#li-user').value.trim(), pw=$('#li-pass').value;
+  if(!un || !pw) return loginErr('Enter your username and password.');
+  const er=$('#li-err'); if(er) er.classList.add('hidden');
+  const btn=document.querySelector('.login-card button[type="submit"]');
+  if(btn){ btn.disabled=true; btn.dataset.label=btn.textContent; btn.textContent='Signing in…'; }
+  // Every account (manager + SDR) is validated server-side. No passwords live in this file.
+  apiLogin(un, pw).then(res=>{
+    if(btn){ btn.disabled=false; if(btn.dataset.label) btn.textContent=btn.dataset.label; }
+    if(!res || !res.ok){ return loginErr(res && res.error ? res.error : 'Invalid username or password.'); }
+    upsertLocalUser(res.user);
+    localStorage.setItem(SESS_KEY, JSON.stringify({id:res.user.id, role:res.user.role, name:res.user.name}));
+    logActivity('Logged in');
+    syncUsers().finally(()=>{ S.view='dashboard'; render(); });
+  });
+  return false;
 }
 function logout(){ logActivity('Logged out'); localStorage.removeItem(SESS_KEY); apiLogout(); render(); }
 
@@ -171,9 +173,30 @@ async function apiLogin(username, password){
   try{
     const r = await fetch('/api/admin-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
     const j = await r.json().catch(()=>({}));
-    if(r.ok && j.token){ API_TOKEN=j.token; sessionStorage.setItem('tir_api_token',j.token); return true; }
+    if(r.ok && j.token){ API_TOKEN=j.token; sessionStorage.setItem('tir_api_token',j.token); return {ok:true, token:j.token, user:j.user}; }
+    return {ok:false, status:r.status, error:j.error || 'Invalid username or password.'};
+  }catch(e){ return {ok:false, error:'Network error — check your connection.'}; }
+}
+// Keep the local user list in sync with the server (manager only).
+function upsertLocalUser(su){
+  if(!su) return;
+  let u=db.users.find(x=>x.id===su.id);
+  if(u){ u.name=su.name; u.role=su.role; u.username=su.username; u.status='active'; }
+  else { db.users.push({id:su.id,name:su.name,username:su.username,role:su.role,status:'active'}); }
+  save();
+}
+async function syncUsers(){
+  const s=session();
+  if(!API_TOKEN || !s || s.role!=='manager') return;
+  try{
+    const r=await fetch('/api/users',{headers:{Authorization:'Bearer '+API_TOKEN}});
+    if(!r.ok) return;
+    const j=await r.json();
+    if(Array.isArray(j.users)){
+      db.users = j.users.map(u=>({id:u.id,name:u.name,username:u.usernameDisplay||u.username,email:u.email||'',role:u.role,status:u.status||'active'}));
+      save();
+    }
   }catch(e){}
-  return false;
 }
 function apiLogout(){ API_TOKEN=null; try{ sessionStorage.removeItem('tir_api_token'); }catch(e){} }
 async function fetchBookings(){
@@ -198,7 +221,7 @@ async function updateBookingStatus(id, status){
 function unlockBookings(e){
   e.preventDefault();
   const pw=$('#bk-pass').value; const u=currentUser();
-  apiLogin(u?u.username:'', pw).then(ok=>{ if(ok){ loadBookings(); } else { const er=$('#bk-err'); if(er) er.style.display='block'; } });
+  apiLogin(u?u.username:'', pw).then(res=>{ if(res&&res.ok){ loadBookings(); } else { const er=$('#bk-err'); if(er) er.style.display='block'; } });
   return false;
 }
 
@@ -714,8 +737,8 @@ function openUserForm(id){
       <div class="grid-2c">
         <div class="fld"><label>Full name *</label><input id="uf-name" value="${u?esc(u.name):''}" required></div>
         <div class="fld"><label>Email</label><input id="uf-email" type="email" value="${u?esc(u.email):''}"></div>
-        <div class="fld"><label>Username *</label><input id="uf-user" value="${u?esc(u.username):''}" required></div>
-        <div class="fld"><label>Password *</label><input id="uf-pass" value="${u?esc(u.password):'sdr123'}" required></div>
+        <div class="fld"><label>Username *</label><input id="uf-user" value="${u?esc(u.username):''}" autocomplete="off" ${u?'readonly title="Username can\'t be changed"':'required'}></div>
+        <div class="fld"><label>${u?'Reset password':'Password *'}</label><div class="pw-wrap"><input id="uf-pass" type="password" autocomplete="new-password" placeholder="${u?'Leave blank to keep current':'Min. 6 characters'}" ${u?'':'required minlength="6"'}><button type="button" class="pw-eye" aria-label="Show password" onclick="togglePw('uf-pass',this)">👁</button></div></div>
       </div>
     </div><div class="modal-f"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button><button type="submit" class="btn btn-primary">${u?'Save':'Create SDR'}</button></div></form>
   </div>`);
@@ -759,13 +782,35 @@ function logTouch(id,text,act){ const l=db.leads.find(x=>x.id===id); l.activitie
 function deleteLead(id){ if(!confirm('Delete this lead permanently?'))return; const l=db.leads.find(x=>x.id===id); db.leads=db.leads.filter(x=>x.id!==id); logActivity(`Deleted lead "${l.name}"`); save(); closeModal(); renderContent(); toast('Lead deleted'); }
 function createLead(e){ e.preventDefault(); const o={name:$('#nl-name').value.trim(),email:$('#nl-email').value.trim(),phone:$('#nl-phone').value.trim(),company:$('#nl-company').value.trim(),service:$('#nl-service').value,value:+$('#nl-value').value||0,stage:$('#nl-stage').value,ownerId:$('#nl-owner').value||null,source:'Manual'}; const l=makeLead(o); l.stage=o.stage; l.value=o.value; l.ownerId=o.ownerId; db.leads.unshift(l); logActivity(`Created lead "${l.name}"`); save(); closeModal(); renderContent(); toast('Lead created'); return false; }
 
-function saveUser(e,id){ e.preventDefault(); const name=$('#uf-name').value.trim(),email=$('#uf-email').value.trim(),un=$('#uf-user').value.trim(),pw=$('#uf-pass').value;
-  if(db.users.some(u=>u.username===un&&u.id!==id)){ toast('Username already taken'); return false; }
-  if(id){ const u=db.users.find(x=>x.id===id); Object.assign(u,{name,email,username:un,password:pw}); logActivity(`Edited SDR "${name}"`); }
-  else { db.users.push({id:uid(),name,email,username:un,password:pw,role:'sdr',status:'active'}); logActivity(`Created SDR account for ${name}`); }
-  save(); closeModal(); renderContent(); toast('Saved'); return false; }
-function toggleUser(id){ const u=db.users.find(x=>x.id===id); u.status=u.status==='active'?'inactive':'active'; logActivity(`${u.status==='active'?'Enabled':'Disabled'} SDR "${u.name}"`); save(); renderContent(); }
-function deleteUser(id){ const u=db.users.find(x=>x.id===id); if(!confirm(`Delete ${u.name}? Their leads will become unassigned.`))return; db.leads.forEach(l=>{ if(l.ownerId===id) l.ownerId=null; }); db.users=db.users.filter(x=>x.id!==id); logActivity(`Deleted SDR "${u.name}"`); save(); renderContent(); toast('SDR deleted'); }
+async function apiUsers(method, payload){
+  const r=await fetch('/api/users',{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+API_TOKEN},body:payload?JSON.stringify(payload):undefined});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===401){ toast('Session expired — please sign in again'); logout(); throw new Error('unauth'); }
+  if(!r.ok) throw new Error(j.error||'Request failed');
+  return j;
+}
+function saveUser(e,id){ e.preventDefault();
+  const name=$('#uf-name').value.trim(), email=$('#uf-email').value.trim(), un=$('#uf-user').value.trim(), pw=$('#uf-pass').value;
+  if(!name){ toast('Name is required'); return false; }
+  (async()=>{
+    try{
+      if(id){ await apiUsers('PATCH',{id,name,email,password:pw||undefined}); logActivity(`Edited account "${name}"`); }
+      else { if((pw||'').length<6){ toast('Password must be at least 6 characters'); return; } await apiUsers('POST',{name,username:un,email,password:pw,role:'sdr'}); logActivity(`Created SDR account for ${name}`); }
+      await syncUsers(); closeModal(); renderContent(); toast('Saved');
+    }catch(err){ if(err.message!=='unauth') toast(err.message); }
+  })();
+  return false;
+}
+function toggleUser(id){
+  const u=db.users.find(x=>x.id===id); if(!u) return;
+  const next=u.status==='active'?'inactive':'active';
+  (async()=>{ try{ await apiUsers('PATCH',{id,status:next}); logActivity(`${next==='active'?'Enabled':'Disabled'} SDR "${u.name}"`); await syncUsers(); renderContent(); }catch(err){ if(err.message!=='unauth') toast(err.message); } })();
+}
+function deleteUser(id){
+  const u=db.users.find(x=>x.id===id); if(!u) return;
+  if(!confirm(`Delete ${u.name}? Their leads will become unassigned.`)) return;
+  (async()=>{ try{ await apiUsers('DELETE',{id}); db.leads.forEach(l=>{ if(l.ownerId===id) l.ownerId=null; }); logActivity(`Deleted SDR "${u.name}"`); await syncUsers(); renderContent(); toast('SDR deleted'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })();
+}
 
 function approveBlog(id){ const p=db.blogPosts.find(x=>x.id===id); p.status='published'; logActivity(`Approved blog "${p.title}"`); save(); renderContent(); toast('Published'); }
 function rejectBlog(id){ const p=db.blogPosts.find(x=>x.id===id); p.status='rejected'; logActivity(`Rejected blog "${p.title}"`); save(); renderContent(); toast('Rejected'); }
