@@ -5,7 +5,10 @@ const crm = require('../lib/crmstore');
 module.exports = async (req, res) => {
   let posts = [];
   try { posts = (await crm.list('posts')).filter((p) => p.status === 'published'); } catch (e) { posts = []; }
-  const urls = posts.map((p) => {
+  // Always include the blog index so the sitemap is never empty (avoids a GSC error).
+  const today = new Date().toISOString().slice(0, 10);
+  let urls = `<url><loc>https://techinrent.com/blog</loc><lastmod>${today}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>`;
+  urls += posts.map((p) => {
     const d = new Date(p.updatedAt || p.publishedAt || p.createdAt || Date.now()).toISOString().slice(0, 10);
     return `<url><loc>https://techinrent.com/blog/${p.slug}</loc><lastmod>${d}</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>`;
   }).join('');
