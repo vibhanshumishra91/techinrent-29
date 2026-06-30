@@ -1,0 +1,9 @@
+{
+  "name": "techinrent-website",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TechInRent marketing site + in-house demo booking API",
+  "dependencies": {
+    "@upstash/redis": "^1.34.3"
+  }
+}

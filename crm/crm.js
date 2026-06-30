@@ -109,12 +109,53 @@ function doLogin(e){
   if(u.status==='inactive'){ $('#li-err').textContent='This account is inactive. Contact your manager.'; $('#li-err').classList.remove('hidden'); return false; }
   localStorage.setItem(SESS_KEY, JSON.stringify({id:u.id,role:u.role,name:u.name}));
   logActivity('Logged in');
+  // Seamlessly unlock the server-side bookings API with the same credentials.
+  if(u.role==='manager'){ apiLogin(un, pw); }
   S.view = 'dashboard';
   render();
   return false;
 }
-function logout(){ logActivity('Logged out'); localStorage.removeItem(SESS_KEY); render(); }
+function logout(){ logActivity('Logged out'); localStorage.removeItem(SESS_KEY); apiLogout(); render(); }
 function fillDemo(un,pw){ $('#li-user').value=un; $('#li-pass').value=pw; }
+
+/* ---------- demo bookings API (server-side, persistent) ---------- */
+let API_TOKEN = sessionStorage.getItem('tir_api_token') || null;
+let BOOKINGS = [];
+let BOOKING_STATUSES = ['New','Contacted','Confirmed','Completed','Cancelled','No-show'];
+async function apiLogin(username, password){
+  try{
+    const r = await fetch('/api/admin-login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password})});
+    const j = await r.json().catch(()=>({}));
+    if(r.ok && j.token){ API_TOKEN=j.token; sessionStorage.setItem('tir_api_token',j.token); return true; }
+  }catch(e){}
+  return false;
+}
+function apiLogout(){ API_TOKEN=null; try{ sessionStorage.removeItem('tir_api_token'); }catch(e){} }
+async function fetchBookings(){
+  if(!API_TOKEN) return {auth:false};
+  try{
+    const r = await fetch('/api/bookings',{headers:{Authorization:'Bearer '+API_TOKEN}});
+    if(r.status===401){ apiLogout(); return {auth:false}; }
+    const j = await r.json().catch(()=>({}));
+    if(r.ok){ BOOKINGS=j.bookings||[]; if(j.statuses) BOOKING_STATUSES=j.statuses; return {auth:true, ok:true}; }
+    return {auth:true, ok:false, error:j.error||'Error'};
+  }catch(e){ return {auth:true, ok:false, error:'Network error'}; }
+}
+async function updateBookingStatus(id, status){
+  if(!API_TOKEN) return;
+  try{
+    const r = await fetch('/api/bookings',{method:'PATCH',headers:{'Content-Type':'application/json',Authorization:'Bearer '+API_TOKEN},body:JSON.stringify({id,status})});
+    if(r.ok){ const j=await r.json(); const b=BOOKINGS.find(x=>x.id===id); if(b&&j.booking) Object.assign(b,j.booking); toast('Status updated to '+status); }
+    else if(r.status===401){ apiLogout(); loadBookings(); }
+    else { toast('Could not update status'); }
+  }catch(e){ toast('Network error'); }
+}
+function unlockBookings(e){
+  e.preventDefault();
+  const pw=$('#bk-pass').value; const u=currentUser();
+  apiLogin(u?u.username:'', pw).then(ok=>{ if(ok){ loadBookings(); } else { const er=$('#bk-err'); if(er) er.style.display='block'; } });
+  return false;
+}
 
 /* ---------- app state ---------- */
 let S = { view:'dashboard', sidebarOpen:false, leadSearch:'', leadStage:'', leadOwner:'' };
@@ -151,7 +192,7 @@ function loginView(){
 
 const MANAGER_NAV=[
   {g:'Overview',items:[['dashboard','📊','Dashboard']]},
-  {g:'Sales',items:[['leads','🎯','Lead Management'],['pipeline','🔀','Sales Pipeline'],['inquiries','📥','Website Inquiries']]},
+  {g:'Sales',items:[['bookings','📅','Demo Bookings'],['leads','🎯','Lead Management'],['pipeline','🔀','Sales Pipeline'],['inquiries','📥','Website Inquiries']]},
   {g:'Team',items:[['users','👥','SDR / Users'],['attendance','🕘','Attendance'],['activity','📜','Activity Logs']]},
   {g:'Content',items:[['blog','📝','Blog Management']]},
   {g:'Insights',items:[['reports','📈','Reports & Analytics']]},
@@ -209,14 +250,14 @@ function toggleSidebar(){ S.sidebarOpen=!S.sidebarOpen; const sb=$('#sidebar'); 
 
 function renderContent(){
   const u=currentUser(); if(!u) return;
-  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',leads:'Lead Management',pipeline:'Sales Pipeline',inquiries:'Website Inquiries',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',activity:'Activity Logs',blog:'Blog Management',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',performance:'My Performance',profile:'My Profile'};
+  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',inquiries:'Website Inquiries',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',activity:'Activity Logs',blog:'Blog Management',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',performance:'My Performance',profile:'My Profile'};
   const tt=$('#view-title'); if(tt) tt.textContent=titles[S.view]||'';
   const c=$('#content'); if(!c) return;
   const allowedSDR=['dashboard','myleads','attendance','daily','blog','performance','profile'];
   if(u.role==='sdr' && !allowedSDR.includes(S.view)) S.view='dashboard';
   let html='';
   if(u.role==='manager'){
-    html=({dashboard:mgrDashboard,leads:()=>leadsView(false),pipeline:pipelineView,inquiries:inquiriesView,users:usersView,attendance:mgrAttendance,activity:activityView,blog:blogView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
+    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,inquiries:inquiriesView,users:usersView,attendance:mgrAttendance,activity:activityView,blog:blogView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
   } else {
     html=({dashboard:sdrDashboard,myleads:()=>leadsView(true),attendance:sdrAttendance,daily:dailyView,blog:blogView,performance:perfView,profile:profileView}[S.view]||sdrDashboard)();
   }
@@ -658,6 +699,78 @@ function download(name,text){ const b=new Blob([text],{type:'text/csv'}); const 
 function exportLeads(){ const h=['Name','Email','Phone','Company','Service','Stage','Owner','Source','Value','Created']; const rows=db.leads.map(l=>[l.name,l.email,l.phone,l.company,l.service,l.stage,userName(l.ownerId),l.source,l.value,fmt(l.createdAt)]); download('techinrent-leads.csv',[h,...rows].map(r=>r.map(c=>`"${String(c==null?'':c).replace(/"/g,'""')}"`).join(',')).join('\n')); toast('Leads exported'); }
 function exportAttendance(){ const h=['SDR','Date','ClockIn','ClockOut','Hours']; const rows=db.attendance.map(a=>[userName(a.userId),a.date,a.clockIn?fmtT(a.clockIn):'',a.clockOut?fmtT(a.clockOut):'',a.clockIn?(((a.clockOut||a.clockIn)-a.clockIn)/3600000).toFixed(1):'0']); download('techinrent-attendance.csv',[h,...rows].map(r=>r.map(c=>`"${c}"`).join(',')).join('\n')); toast('Attendance exported'); }
 function importLeads(input){ const f=input.files[0]; if(!f)return; const r=new FileReader(); r.onload=()=>{ const lines=String(r.result).split(/\r?\n/).filter(Boolean); let n=0; lines.forEach((line,i)=>{ if(i===0&&/name/i.test(line))return; const c=line.split(',').map(x=>x.replace(/^"|"$/g,'').trim()); if(c[0]){ db.leads.unshift(makeLead({name:c[0],email:c[1]||'',phone:c[2]||'',company:c[3]||'',service:c[4]||'Lead Generation',source:'Import'})); n++; } }); logActivity(`Imported ${n} leads from CSV`); save(); renderContent(); toast(n+' leads imported'); }; r.readAsText(f); }
+
+/* ============================================================
+   DEMO BOOKINGS (server-side, persistent across devices)
+   ============================================================ */
+function bookingsView(){
+  setTimeout(loadBookings, 0);
+  return `<div id="bookings-root"><div class="empty">Loading demo bookings…</div></div>`;
+}
+async function loadBookings(){
+  const root=document.getElementById('bookings-root'); if(!root) return;
+  if(!API_TOKEN){ root.innerHTML=bookingsUnlockHTML(); return; }
+  root.innerHTML='<div class="empty">Loading demo bookings…</div>';
+  const res=await fetchBookings();
+  if(!res.auth){ root.innerHTML=bookingsUnlockHTML(); return; }
+  if(!res.ok){ root.innerHTML=`<div class="empty">Could not load bookings: ${esc(res.error||'error')}</div>`; return; }
+  root.innerHTML=bookingsTableHTML();
+}
+function bookingsUnlockHTML(){
+  return `<div class="panel" style="max-width:440px"><div class="panel-h"><h3>🔒 Unlock demo bookings</h3></div><div class="panel-b">
+    <p style="color:var(--muted);margin:0 0 12px">Enter the admin password to view and manage live demo requests submitted from the website.</p>
+    <form onsubmit="return unlockBookings(event)">
+      <div class="fld"><label>Admin password</label><input id="bk-pass" type="password" autocomplete="current-password" required></div>
+      <div id="bk-err" style="display:none;color:var(--red);font-size:.85rem;margin:6px 0">Incorrect password. Please try again.</div>
+      <button class="btn btn-primary" type="submit" style="margin-top:8px">Unlock</button>
+    </form></div></div>`;
+}
+function bookingPreferred(b){
+  if(!b.preferredAt) return '—';
+  const d=new Date(b.preferredAt);
+  if(isNaN(d.getTime())) return esc(b.preferredAt);
+  return d.toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+function bookingsTableHTML(){
+  const rows = BOOKINGS.length ? BOOKINGS.map(b=>{
+    const opts=BOOKING_STATUSES.map(s=>`<option ${b.status===s?'selected':''}>${s}</option>`).join('');
+    return `<tr>
+      <td><div class="nm">${esc(b.fullName)}</div><div class="sub">${esc(b.email)}</div></td>
+      <td>${esc(b.company)||'—'}</td>
+      <td>${esc(b.phone)||'—'}</td>
+      <td>${esc(b.service)||'—'}</td>
+      <td>${bookingPreferred(b)}</td>
+      <td><span class="pill2">${esc(b.source||'Website')}</span></td>
+      <td>${fmtT(b.createdAt)}</td>
+      <td><select onchange="updateBookingStatus('${b.id}',this.value)">${opts}</select></td>
+      <td>${b.message?`<button class="btn btn-ghost btn-sm" onclick="viewBookingMsg('${b.id}')">View</button>`:'—'}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="9"><div class="empty">No demo bookings yet. They appear here the moment a visitor submits the booking form on the website.</div></td></tr>`;
+  return `<div class="toolbar"><p style="margin:0;color:var(--muted)">Live demo requests captured from the website booking form — <b>${BOOKINGS.length}</b> total.</p><div class="spacer"></div>
+    <button class="btn btn-ghost btn-sm" onclick="loadBookings()">↻ Refresh</button>
+    <button class="btn btn-ghost btn-sm" onclick="exportBookings()">⬇ Export CSV</button></div>
+  <div class="panel"><div class="table-scroll"><table class="tbl">
+    <thead><tr><th>Name</th><th>Company</th><th>Phone</th><th>Service</th><th>Preferred</th><th>Source</th><th>Received</th><th>Status</th><th>Message</th></tr></thead>
+    <tbody>${rows}</tbody></table></div></div>`;
+}
+function viewBookingMsg(id){
+  const b=BOOKINGS.find(x=>x.id===id); if(!b) return;
+  modal(`<div class="modal" onclick="event.stopPropagation()" style="max-width:540px">
+    <div class="modal-h"><h3>${esc(b.fullName)}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="modal-b">
+      <p style="line-height:1.7"><b>Email:</b> ${esc(b.email)}<br><b>Phone:</b> ${esc(b.phone||'—')}<br><b>Company:</b> ${esc(b.company||'—')}<br><b>Service:</b> ${esc(b.service||'—')}<br><b>Preferred time:</b> ${bookingPreferred(b)}<br><b>Status:</b> ${esc(b.status)}</p>
+      <label style="font-size:.8rem;font-weight:700;color:var(--slate)">Message</label>
+      <p style="white-space:pre-wrap;background:#f1f4f9;padding:12px;border-radius:8px;margin-top:6px">${esc(b.message||'(no message)')}</p>
+    </div>
+    <div class="modal-f"><a class="btn btn-ghost" href="mailto:${esc(b.email)}">✉️ Reply by email</a><button class="btn btn-primary" onclick="closeModal()">Close</button></div>
+  </div>`);
+}
+function exportBookings(){
+  const h=['Name','Company','Email','Phone','Service','Preferred','Source','Status','Received','Message'];
+  const rows=BOOKINGS.map(b=>[b.fullName,b.company,b.email,b.phone,b.service,b.preferredAt,b.source,b.status,fmtT(b.createdAt),b.message]);
+  download('techinrent-bookings.csv',[h,...rows].map(r=>r.map(c=>`"${String(c==null?'':c).replace(/"/g,'""')}"`).join(',')).join('\n'));
+  toast('Bookings exported');
+}
 
 /* ---------- boot ---------- */
 render();

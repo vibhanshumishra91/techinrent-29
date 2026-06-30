@@ -12,3 +12,4 @@ Thumbs.db
 # Logs / deps (none needed for static site, kept for safety)
 node_modules/
 *.log
+.env*
