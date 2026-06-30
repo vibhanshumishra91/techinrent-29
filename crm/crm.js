@@ -55,9 +55,11 @@ function makeLead(o){ const now=Date.now(); return {
   createdAt:o.ts||now }; }
 
 function seed(){
-  const u1={id:'u1',name:'Vibhanshu',username:'vibhanshu',password:'mybaby',role:'manager',email:'vibhanshu@techinrent.com',status:'active'};
-  const u2={id:'u2',name:'Aanya Sharma',username:'aanya',password:'sdr123',role:'sdr',email:'aanya@techinrent.com',status:'active'};
-  const u3={id:'u3',name:'Rohit Verma',username:'rohit',password:'sdr123',role:'sdr',email:'rohit@techinrent.com',status:'active'};
+  // Manager password is NOT stored client-side — it lives only in the server env
+  // (ADMIN_PASSWORD) and is validated via /api/admin-login, so it never leaks in page source.
+  const u1={id:'u1',name:'Vibhanshu',username:'Vibhanshu',password:'',role:'manager',email:'vibhanshu@techinrent.com',status:'active'};
+  const u2={id:'u2',name:'Priyanka',username:'Priyanka',password:'Techinrent2026',role:'sdr',email:'priyanka@techinrent.com',status:'active'};
+  const u3={id:'u3',name:'Vedant',username:'Vedant',password:'Techinrent2026',role:'sdr',email:'vedant@techinrent.com',status:'active'};
   const D=Date.now(), day=86400000;
   const leads=[
     {...makeLead({name:'Priya Nair',email:'priya@nimbussaas.com',phone:'+91 90000 11111',company:'Nimbus SaaS',service:'Lead Generation',source:'Website',stage:'Qualified',ownerId:'u2',value:1200,ts:D-6*day}),followUpAt:D+1*day},
@@ -101,10 +103,19 @@ function load(){ let d=null; try{ d=JSON.parse(localStorage.getItem(DB_KEY)); }c
 function save(){ localStorage.setItem(DB_KEY, JSON.stringify(db)); }
 let db = load();
 
-// migration: upgrade the old default manager login to the configured one
+// migration: apply the configured manager + SDR accounts to existing installs
+// (keeps the u1/u2/u3 ids so lead ownership stays intact). Runs once.
 (function(){
-  var m = db.users && db.users.find(function(u){ return u.role==='manager'; });
-  if (m && m.username==='manager') { m.username='vibhanshu'; m.password='mybaby'; m.name='Vibhanshu'; save(); }
+  if (db._acctV3) return;
+  function setU(id,name,username,password,role,email){
+    var u = db.users.find(function(x){ return x.id===id; });
+    if (u){ u.name=name; u.username=username; u.password=password; u.role=role; if(email) u.email=email; u.status='active'; }
+    else { db.users.push({id:id,name:name,username:username,password:password,role:role,email:email||'',status:'active'}); }
+  }
+  setU('u1','Vibhanshu','Vibhanshu','','manager','vibhanshu@techinrent.com');     // password = server-side only
+  setU('u2','Priyanka','Priyanka','Techinrent2026','sdr','priyanka@techinrent.com');
+  setU('u3','Vedant','Vedant','Techinrent2026','sdr','vedant@techinrent.com');
+  db._acctV3 = true; save();
 })();
 
 function mergeInbox(){
@@ -126,19 +137,29 @@ function logActivity(action){ const u=currentUser(); db.activityLogs.unshift({ts
 function userName(id){ const u=db.users.find(x=>x.id===id); return u?u.name:'Unassigned'; }
 function initials(n){ return (n||'?').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase(); }
 
+function loginErr(msg){ const e=$('#li-err'); if(e){ if(msg) e.textContent=msg; e.classList.remove('hidden'); } return false; }
+function startSession(u){
+  localStorage.setItem(SESS_KEY, JSON.stringify({id:u.id,role:u.role,name:u.name}));
+  logActivity('Logged in'); S.view='dashboard'; render();
+}
 function doLogin(e){
   e.preventDefault();
-  const un=$('#li-user').value.trim(), pw=$('#li-pass').value;
-  const u=db.users.find(x=>x.username===un && x.password===pw);
-  if(!u){ $('#li-err').classList.remove('hidden'); return false; }
-  if(u.status==='inactive'){ $('#li-err').textContent='This account is inactive. Contact your manager.'; $('#li-err').classList.remove('hidden'); return false; }
-  localStorage.setItem(SESS_KEY, JSON.stringify({id:u.id,role:u.role,name:u.name}));
-  logActivity('Logged in');
-  // Seamlessly unlock the server-side bookings API with the same credentials.
-  if(u.role==='manager'){ apiLogin(un, pw); }
-  S.view = 'dashboard';
-  render();
-  return false;
+  const un=$('#li-user').value.trim(), pw=$('#li-pass').value, lc=un.toLowerCase();
+  // SDR / staff accounts are validated locally (username case-insensitive).
+  const sdr=db.users.find(x=> x.role!=='manager' && x.username.toLowerCase()===lc && x.password===pw);
+  if(sdr){
+    if(sdr.status==='inactive') return loginErr('This account is inactive. Contact your manager.');
+    startSession(sdr); return false;
+  }
+  // Manager is validated server-side — the password is never stored in this file.
+  const mgr=db.users.find(x=> x.role==='manager' && x.username.toLowerCase()===lc);
+  if(mgr){
+    if(mgr.status==='inactive') return loginErr('This account is inactive.');
+    const btn=$('#li-err'); if(btn) btn.classList.add('hidden');
+    apiLogin(mgr.username, pw).then(ok=>{ ok ? startSession(mgr) : loginErr('Invalid username or password.'); });
+    return false;
+  }
+  return loginErr('Invalid username or password.');
 }
 function logout(){ logActivity('Logged out'); localStorage.removeItem(SESS_KEY); apiLogout(); render(); }
 
@@ -486,22 +507,24 @@ function settingsView(){
    ============================================================ */
 function profileView(){
   const u=currentUser();
+  const mgr=u.role==='manager';
   return `<div class="row-2">
     <div class="panel"><div class="panel-h"><h3>My account</h3></div><div class="panel-b">
       <div class="grid-2c">
         <div class="fld"><label>Full name</label><input id="pf-name" value="${esc(u.name)}"></div>
-        <div class="fld"><label>Username (login)</label><input id="pf-user" value="${esc(u.username)}"></div>
+        <div class="fld"><label>Username (login)</label><input id="pf-user" value="${esc(u.username)}" ${mgr?'readonly title="Managed by the server admin"':''}></div>
       </div>
       <div class="fld"><label>Email</label><input id="pf-email" value="${esc(u.email||'')}"></div>
       <button class="btn btn-primary" onclick="saveProfile()">Save changes</button>
     </div></div>
     <div class="panel"><div class="panel-h"><h3>Change password</h3></div><div class="panel-b">
-      <div class="fld"><label>Current password</label><div class="pw-wrap"><input id="pf-cur" type="password" placeholder="••••••"><button type="button" class="pw-eye" aria-label="Show password" onclick="togglePw('pf-cur',this)">👁</button></div></div>
+      ${mgr ? `<p style="color:var(--muted);margin:0">Your manager login is secured on the server, so it can't be changed here. To update the manager password, change the <code>ADMIN_PASSWORD</code> server setting (ask your developer).</p>`
+      : `<div class="fld"><label>Current password</label><div class="pw-wrap"><input id="pf-cur" type="password" placeholder="••••••"><button type="button" class="pw-eye" aria-label="Show password" onclick="togglePw('pf-cur',this)">👁</button></div></div>
       <div class="grid-2c">
         <div class="fld"><label>New password</label><div class="pw-wrap"><input id="pf-new" type="password"><button type="button" class="pw-eye" aria-label="Show password" onclick="togglePw('pf-new',this)">👁</button></div></div>
         <div class="fld"><label>Confirm new password</label><div class="pw-wrap"><input id="pf-new2" type="password"><button type="button" class="pw-eye" aria-label="Show password" onclick="togglePw('pf-new2',this)">👁</button></div></div>
       </div>
-      <button class="btn btn-primary" onclick="changePassword()">Update password</button>
+      <button class="btn btn-primary" onclick="changePassword()">Update password</button>`}
     </div></div>
   </div>
   <p class="t-meta" style="margin-top:8px">Signed in as <strong>${esc(u.name)}</strong> · ${u.role==='manager'?'Manager (Super Admin)':'SDR'}</p>`;
@@ -517,6 +540,7 @@ function saveProfile(){
 }
 function changePassword(){
   const u=currentUser();
+  if(u.role==='manager'){ toast('Manager password is managed on the server.'); return; }
   const cur=$('#pf-cur').value, n=$('#pf-new').value, n2=$('#pf-new2').value;
   if(u.password && cur!==u.password){ toast('Current password is incorrect'); return; }
   if(!n || n.length<4){ toast('New password must be at least 4 characters'); return; }
