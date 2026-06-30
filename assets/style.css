@@ -224,13 +224,22 @@ p{margin:0 0 1rem}
 }
 @media (max-width:600px){
   .section{padding:60px 0}
+  .nav{gap:10px}
+  .brand{font-size:1.02rem;gap:8px;min-width:0;flex-shrink:1}
+  .brand img{height:28px;flex-shrink:0}
   .nav-links{display:none}
   .nav-links.open{display:flex;position:absolute;top:72px;left:0;right:0;flex-direction:column;
     background:#fff;border-bottom:1px solid var(--line);padding:18px 24px;gap:16px}
-  .menu-btn{display:block}
+  .menu-btn{display:block;flex-shrink:0}
+  .nav-cta{gap:8px;flex-shrink:0}
   .nav-cta .btn-ghost{display:none}
+  .nav-cta .btn-primary{padding:9px 13px;font-size:.86rem;white-space:nowrap}
   .grid-3,.grid-2,.who,.steps,.feat,.foot-grid{grid-template-columns:1fr}
   .hero-cta .btn{flex:1}
+}
+@media (max-width:400px){
+  .brand span{display:none}
+  .nav-cta .btn-primary{padding:8px 11px;font-size:.8rem}
 }
 
 /* ===== Extended components ===== */

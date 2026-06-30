@@ -20,6 +20,31 @@ function todayStr(){ return new Date().toISOString().slice(0,10); }
 function ago(ts){ const s=(Date.now()-ts)/1000; if(s<60)return'just now'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; }
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),2400); }
 
+/* ---------- PWA install (download web app to phone) ---------- */
+if('serviceWorker' in navigator){ window.addEventListener('load',function(){ navigator.serviceWorker.register('/sw.js').catch(function(){}); }); }
+let _deferredPrompt=null;
+window.addEventListener('beforeinstallprompt',function(e){ e.preventDefault(); _deferredPrompt=e; });
+window.addEventListener('appinstalled',function(){ _deferredPrompt=null; try{toast('App installed 🎉');}catch(e){} });
+function _isStandalone(){ return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true; }
+function installApp(){
+  if(_isStandalone()){ toast('App is already installed ✅'); return; }
+  if(_deferredPrompt){ _deferredPrompt.prompt(); _deferredPrompt.userChoice.finally(function(){ _deferredPrompt=null; }); return; }
+  var ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
+  modal(`<div class="modal" onclick="event.stopPropagation()"><div class="modal-h"><h3>📲 Install Techinrent Office</h3><button class="x" onclick="closeModal()">×</button></div><div class="modal-b">
+    <p style="margin:0 0 12px">Add the admin app to your phone's home screen for one-tap access — it opens straight to <b>techinrent.com/admin</b> and works full-screen.</p>
+    ${ios
+      ? `<b>On iPhone / iPad (Safari):</b><ol style="padding-left:18px;line-height:1.8;margin:8px 0 0">
+           <li>Tap the <b>Share</b> button (□↑) at the bottom</li>
+           <li>Scroll and tap <b>Add to Home Screen</b></li>
+           <li>Tap <b>Add</b> — the TIR Office icon appears on your home screen</li></ol>`
+      : `<b>On Android (Chrome):</b><ol style="padding-left:18px;line-height:1.8;margin:8px 0 0">
+           <li>Open the <b>⋮</b> menu (top-right)</li>
+           <li>Tap <b>Install app</b> (or <b>Add to Home screen</b>)</li>
+           <li>Confirm <b>Install</b></li></ol>`}
+    <p class="t-meta" style="margin-top:12px">Tip: open this page in your phone's browser first, then follow the steps above.</p>
+  </div></div>`);
+}
+
 /* ---------- seed ---------- */
 function makeLead(o){ const now=Date.now(); return {
   id:uid(), name:o.name||'Unknown', email:o.email||'', phone:o.phone||'', company:o.company||'',
@@ -225,6 +250,7 @@ function appShell(u){
       <div class="s-brand"><img src="/assets/logo.png" alt=""> Techinrent Office</div>
       ${navHtml}
       <div class="nav-group">Account</div>
+      <div class="nav-item" onclick="installApp()"><span class="ic">📲</span>Install App</div>
       <div class="nav-item" onclick="logout()"><span class="ic">🚪</span>Sign Out</div>
       <div class="nav-item" onclick="window.location.href='/index.html'"><span class="ic">🌐</span>View Website</div>
     </aside>
