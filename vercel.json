@@ -3,6 +3,7 @@
   "trailingSlash": false,
   "rewrites": [
     { "source": "/admin", "destination": "/crm" },
+    { "source": "/blog-sitemap.xml", "destination": "/api/blog-sitemap" },
     { "source": "/blog/:slug/image", "destination": "/api/blog?slug=:slug&img=1" },
     { "source": "/blog/:slug", "destination": "/api/blog?slug=:slug" }
   ]

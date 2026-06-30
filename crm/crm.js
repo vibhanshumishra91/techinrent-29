@@ -159,7 +159,7 @@ function doLogin(e){
     upsertLocalUser(res.user);
     localStorage.setItem(SESS_KEY, JSON.stringify({id:res.user.id, role:res.user.role, name:res.user.name}));
     logActivity('Logged in');
-    syncUsers().finally(()=>{ S.view='dashboard'; render(); });
+    Promise.allSettled([syncUsers(), bootstrapData()]).then(()=>{ S.view='dashboard'; render(); });
   });
   return false;
 }
@@ -199,6 +199,20 @@ async function syncUsers(){
   }catch(e){}
 }
 function apiLogout(){ API_TOKEN=null; try{ sessionStorage.removeItem('tir_api_token'); }catch(e){} }
+/* Phase 2b: pull shared data (leads/reports/attendance) from the server into db
+   so the existing views render live, cross-device data. Falls back to cache. */
+async function bootstrapData(){
+  if(!API_TOKEN) return;
+  try{
+    const r=await Promise.allSettled([apiReqSafe('/api/leads'),apiReqSafe('/api/reports'),apiReqSafe('/api/attendance')]);
+    if(r[0].status==='fulfilled'&&r[0].value) db.leads=r[0].value.leads||[];
+    if(r[1].status==='fulfilled'&&r[1].value) db.dailyReports=r[1].value.reports||[];
+    if(r[2].status==='fulfilled'&&r[2].value) db.attendance=r[2].value.attendance||[];
+    save();
+  }catch(e){}
+}
+async function apiReqSafe(path){ try{ const r=await fetch(path,{headers:{Authorization:'Bearer '+API_TOKEN}}); if(!r.ok) return null; return await r.json(); }catch(e){ return null; } }
+function refreshData(){ bootstrapData().finally(renderContent); toast('Refreshed'); }
 async function fetchBookings(){
   if(!API_TOKEN) return {auth:false};
   try{
@@ -263,7 +277,7 @@ function togglePw(id, btn){
 const MANAGER_NAV=[
   {g:'Overview',items:[['dashboard','📊','Dashboard']]},
   {g:'Sales',items:[['bookings','📅','Demo Bookings'],['leads','🎯','Lead Management'],['pipeline','🔀','Sales Pipeline'],['inquiries','📥','Website Inquiries']]},
-  {g:'Team',items:[['users','👥','SDR / Users'],['attendance','🕘','Attendance'],['activity','📜','Activity Logs']]},
+  {g:'Team',items:[['users','👥','SDR / Users'],['attendance','🕘','Attendance'],['dailyreports','🗒️','Daily Reports'],['activity','📜','Activity Logs']]},
   {g:'Content',items:[['blog','📝','Blog Management'],['partners','🤝','Partners']]},
   {g:'Insights',items:[['reports','📈','Reports & Analytics']]},
   {g:'System',items:[['profile','👤','My Profile'],['settings','⚙️','CRM Settings']]}
@@ -304,6 +318,7 @@ function appShell(u){
           <h1 id="view-title">Dashboard</h1>
         </div>
         <div class="tb2-right">
+          <span class="bell" onclick="refreshData()" title="Refresh data" style="font-size:1.05rem">↻</span>
           <span class="bell" onclick="openNotifs()">🔔${unread?`<span class="dot">${unread}</span>`:''}</span>
           <div class="who-chip"><div class="avatar">${initials(u.name)}</div>
             <div><div class="nm">${esc(u.name)}</div><div class="rl">${u.role==='manager'?'Manager (Super Admin)':'SDR'}</div></div>
@@ -320,14 +335,14 @@ function toggleSidebar(){ S.sidebarOpen=!S.sidebarOpen; const sb=$('#sidebar'); 
 
 function renderContent(){
   const u=currentUser(); if(!u) return;
-  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',inquiries:'Website Inquiries',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',activity:'Activity Logs',blog:'Blog Management',partners:'Partners & Clients',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',performance:'My Performance',profile:'My Profile'};
+  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',inquiries:'Website Inquiries',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',dailyreports:'SDR Daily Reports',activity:'Activity Logs',blog:'Blog Management',partners:'Partners & Clients',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',performance:'My Performance',profile:'My Profile'};
   const tt=$('#view-title'); if(tt) tt.textContent=titles[S.view]||'';
   const c=$('#content'); if(!c) return;
   const allowedSDR=['dashboard','myleads','attendance','daily','performance','profile'];
   if(u.role==='sdr' && !allowedSDR.includes(S.view)) S.view='dashboard';
   let html='';
   if(u.role==='manager'){
-    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,inquiries:inquiriesView,users:usersView,attendance:mgrAttendance,activity:activityView,blog:blogView,partners:partnersView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
+    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,inquiries:inquiriesView,users:usersView,attendance:mgrAttendance,dailyreports:mgrDailyReports,activity:activityView,blog:blogView,partners:partnersView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
   } else {
     html=({dashboard:sdrDashboard,myleads:()=>leadsView(true),attendance:sdrAttendance,daily:dailyView,blog:blogView,performance:perfView,profile:profileView}[S.view]||sdrDashboard)();
   }
@@ -460,6 +475,21 @@ function mgrAttendance(){
   <div class="panel"><div class="panel-h"><h3>Attendance history</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Date</th><th>In</th><th>Out</th></tr></thead><tbody>${hist}</tbody></table></div></div>`;
 }
 
+function mgrDailyReports(){
+  const reps=db.dailyReports.slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
+  const totalCalls=reps.reduce((a,r)=>a+(+r.calls||0),0), totalMeet=reps.reduce((a,r)=>a+(+r.meetings||0),0);
+  const rows=reps.length?reps.map(r=>`<tr>
+    <td class="nm">${esc(r.userName||userName(r.userId))}</td>
+    <td>${esc(r.date||fmt(r.ts))}</td>
+    <td>${r.calls||0}</td>
+    <td>${r.meetings||0}</td>
+    <td>${esc(r.summary||'')}</td>
+    <td>${r.image?`<img src="${r.image}" alt="call log" title="Click to view" style="height:36px;border-radius:6px;cursor:pointer;border:1px solid var(--line)" onclick="openDailyImg('${r.id}')">`:'<span class="t-meta">—</span>'}</td>
+  </tr>`).join(''):`<tr><td colspan="6"><div class="empty">No SDR reports yet. They appear here as your team submits daily reports.</div></td></tr>`;
+  return `<div class="toolbar"><p style="margin:0;color:var(--muted)">Daily activity reports submitted by your SDRs — with call-log proof images.</p><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="refreshData()">↻ Refresh</button></div>
+  <div class="kpis" style="margin-bottom:14px">${kpi(reps.length,'Reports','🗒️')}${kpi(totalCalls,'Total Calls','📞')}${kpi(totalMeet,'Total Meetings','📅')}</div>
+  <div class="panel"><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Date</th><th>Calls</th><th>Meetings</th><th>Summary</th><th>Call proof</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
 function activityView(){
   return `<div class="panel"><div class="panel-h"><h3>System activity logs</h3><span class="pill2">${db.activityLogs.length} events</span></div>
   <div class="panel-b"><ul class="timeline">${db.activityLogs.slice(0,40).map(a=>`<li><div class="t-txt">${esc(a.action)}</div><div class="t-meta">${esc(userName(a.userId))} · ${fmtT(a.ts)}</div></li>`).join('')}</ul></div></div>`;
@@ -875,17 +905,20 @@ function openNotifs(){
    ACTIONS
    ============================================================ */
 function refreshAfter(){ save(); renderContent(); }
-function updLead(id,field,val){ const l=db.leads.find(x=>x.id===id); if(!l)return; l[field]=field==='value'?(+val||0):val; save(); }
-function updStage(id,val){ const l=db.leads.find(x=>x.id===id); if(!l)return; const old=l.stage; l.stage=val; l.activities.push({ts:Date.now(),by:currentUser().id,type:'stage',text:`Stage changed: ${old} → ${val}`}); logActivity(`Updated lead "${l.name}" to ${val}`); save(); openLead(id); renderContent(); }
-function assignLead(id,owner){ const l=db.leads.find(x=>x.id===id); if(!l)return; l.ownerId=owner||null; l.activities.push({ts:Date.now(),by:currentUser().id,type:'assign',text:'Assigned to '+(owner?userName(owner):'Unassigned')}); logActivity(`Assigned "${l.name}" to ${owner?userName(owner):'Unassigned'}`); save(); openLead(id); renderContent(); }
-function setFollow(id,val){ const l=db.leads.find(x=>x.id===id); if(!l)return; l.followUpAt=val?new Date(val+'T09:00:00').getTime():null; l.activities.push({ts:Date.now(),by:currentUser().id,type:'followup',text:'Follow-up set for '+(val||'none')}); save(); toast('Follow-up updated'); }
-function addNote(id){ const inp=$('#note-in'); const v=inp.value.trim(); if(!v)return; const l=db.leads.find(x=>x.id===id); l.notes.push({ts:Date.now(),by:currentUser().id,text:v}); l.activities.push({ts:Date.now(),by:currentUser().id,type:'note',text:'Note added'}); save(); openLead(id); }
-function logCall(id){ logTouch(id,'📞 Call logged','Logged a call'); }
-function logMeeting(id){ logTouch(id,'📅 Meeting logged','Logged a meeting'); }
-function logEmail(id){ logTouch(id,'✉️ Email logged','Logged an email'); }
-function logTouch(id,text,act){ const l=db.leads.find(x=>x.id===id); l.activities.push({ts:Date.now(),by:currentUser().id,type:'touch',text}); logActivity(`${act} with ${l.name}`); save(); openLead(id); toast(text); }
-function deleteLead(id){ if(!confirm('Delete this lead permanently?'))return; const l=db.leads.find(x=>x.id===id); db.leads=db.leads.filter(x=>x.id!==id); logActivity(`Deleted lead "${l.name}"`); save(); closeModal(); renderContent(); toast('Lead deleted'); }
-function createLead(e){ e.preventDefault(); const o={name:$('#nl-name').value.trim(),email:$('#nl-email').value.trim(),phone:$('#nl-phone').value.trim(),company:$('#nl-company').value.trim(),service:$('#nl-service').value,value:+$('#nl-value').value||0,stage:$('#nl-stage').value,ownerId:$('#nl-owner').value||null,source:'Manual'}; const l=makeLead(o); l.stage=o.stage; l.value=o.value; l.ownerId=o.ownerId; db.leads.unshift(l); logActivity(`Created lead "${l.name}"`); save(); closeModal(); renderContent(); toast('Lead created'); return false; }
+/* Server-backed lead writes (Phase 2b) — keep db.leads in sync for the views. */
+function _replaceLead(l){ if(!l)return; const i=db.leads.findIndex(x=>x.id===l.id); if(i>=0) db.leads[i]=l; else db.leads.unshift(l); save(); }
+function _leadErr(e){ if(e&&e.message!=='unauth') toast(e.message||'Could not save'); }
+function updLead(id,field,val){ const v=field==='value'?(+val||0):val; apiReq('/api/leads','PATCH',{id,[field]:v}).then(j=>_replaceLead(j.lead)).catch(_leadErr); }
+function updStage(id,val){ apiReq('/api/leads','PATCH',{id,stage:val,activity:{type:'stage',text:'Stage changed to '+val}}).then(j=>{_replaceLead(j.lead); openLead(id); renderContent();}).catch(_leadErr); }
+function assignLead(id,owner){ apiReq('/api/leads','PATCH',{id,ownerId:owner||null,activity:{type:'assign',text:'Assigned to '+(owner?userName(owner):'Unassigned')}}).then(j=>{_replaceLead(j.lead); openLead(id); renderContent();}).catch(_leadErr); }
+function setFollow(id,val){ apiReq('/api/leads','PATCH',{id,followUpAt:val?new Date(val+'T09:00:00').getTime():null,activity:{type:'followup',text:'Follow-up '+(val||'cleared')}}).then(j=>{_replaceLead(j.lead); toast('Follow-up updated');}).catch(_leadErr); }
+function addNote(id){ const inp=$('#note-in'); const v=inp.value.trim(); if(!v)return; apiReq('/api/leads','PATCH',{id,addNote:v,activity:{type:'note',text:'Note added'}}).then(j=>{_replaceLead(j.lead); openLead(id);}).catch(_leadErr); }
+function logCall(id){ logTouch(id,'📞 Call logged'); }
+function logMeeting(id){ logTouch(id,'📅 Meeting logged'); }
+function logEmail(id){ logTouch(id,'✉️ Email logged'); }
+function logTouch(id,text){ apiReq('/api/leads','PATCH',{id,activity:{type:'touch',text}}).then(j=>{_replaceLead(j.lead); openLead(id); toast(text);}).catch(_leadErr); }
+function deleteLead(id){ if(!confirm('Delete this lead permanently?'))return; apiReq('/api/leads','DELETE',{id}).then(()=>{db.leads=db.leads.filter(x=>x.id!==id); save(); closeModal(); renderContent(); toast('Lead deleted');}).catch(_leadErr); }
+function createLead(e){ e.preventDefault(); const o={name:$('#nl-name').value.trim(),email:$('#nl-email').value.trim(),phone:$('#nl-phone').value.trim(),company:$('#nl-company').value.trim(),service:$('#nl-service').value,value:+$('#nl-value').value||0,stage:$('#nl-stage').value,ownerId:$('#nl-owner').value||null,source:'Manual'}; apiReq('/api/leads','POST',o).then(j=>{ if(j.lead) db.leads.unshift(j.lead); save(); closeModal(); renderContent(); toast('Lead created'); }).catch(_leadErr); return false; }
 
 async function apiUsers(method, payload){
   const r=await fetch('/api/users',{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+API_TOKEN},body:payload?JSON.stringify(payload):undefined});
@@ -917,9 +950,9 @@ function deleteUser(id){
   (async()=>{ try{ await apiUsers('DELETE',{id}); db.leads.forEach(l=>{ if(l.ownerId===id) l.ownerId=null; }); logActivity(`Deleted SDR "${u.name}"`); await syncUsers(); renderContent(); toast('SDR deleted'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })();
 }
 
-function clockIn(){ const u=currentUser(); db.attendance.push({id:uid(),userId:u.id,date:todayStr(),clockIn:Date.now(),clockOut:null,status:'present'}); logActivity('Clocked in'); save(); renderContent(); toast('Clocked in'); }
-function clockOut(){ const u=currentUser(); const rec=db.attendance.find(a=>a.userId===u.id&&a.date===todayStr()&&!a.clockOut); if(rec){ rec.clockOut=Date.now(); logActivity('Clocked out'); save(); renderContent(); toast('Clocked out'); } }
-function submitDaily(){ const u=currentUser(); const calls=+$('#dr-calls').value||0,meetings=+$('#dr-meet').value||0,summary=$('#dr-sum').value.trim(); const image=_drImg||null; try { db.dailyReports.unshift({id:uid(),userId:u.id,date:todayStr(),calls,meetings,summary,image,ts:Date.now()}); save(); } catch(e){ db.dailyReports.shift(); toast('Image too large to store — try a smaller screenshot'); return; } _drImg=null; logActivity(`Submitted daily report (${calls} calls, ${meetings} meetings)`); renderContent(); toast('Report submitted'); }
+function clockIn(){ apiReq('/api/attendance','POST',{action:'in'}).then(j=>{ if(j.record) db.attendance.unshift(j.record); save(); renderContent(); toast('Clocked in'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); }); }
+function clockOut(){ apiReq('/api/attendance','POST',{action:'out'}).then(j=>{ if(j.record){ const i=db.attendance.findIndex(a=>a.id===j.record.id); if(i>=0) db.attendance[i]=j.record; else db.attendance.unshift(j.record); save(); } renderContent(); toast('Clocked out'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); }); }
+function submitDaily(){ const calls=+$('#dr-calls').value||0,meetings=+$('#dr-meet').value||0,summary=$('#dr-sum').value.trim(); const image=_drImg||null; apiReq('/api/reports','POST',{calls,meetings,summary,image}).then(j=>{ if(j.report) db.dailyReports.unshift(j.report); _drImg=null; save(); renderContent(); toast('Report submitted'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message==='Image too large — please use a smaller screenshot'?e.message:'Could not submit report'); }); }
 
 function saveSettings(){ db.settings={company:$('#set-company').value,currency:$('#set-cur').value,email:$('#set-email').value,phone:$('#set-phone').value}; logActivity('Updated CRM settings'); save(); toast('Settings saved'); }
 function markNotifs(){ db.notifications.forEach(n=>n.read=true); save(); render(); openNotifs(); }
@@ -1004,4 +1037,10 @@ function exportBookings(){
 }
 
 /* ---------- boot ---------- */
-render();
+if (session() && API_TOKEN) {
+  // resume an existing session: refresh shared data, then render
+  Promise.allSettled([syncUsers(), bootstrapData()]).finally(render);
+} else {
+  if (session() && !API_TOKEN) { localStorage.removeItem(SESS_KEY); } // token gone (new tab) → require re-login
+  render();
+}

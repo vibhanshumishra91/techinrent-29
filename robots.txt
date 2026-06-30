@@ -4,3 +4,4 @@ Disallow: /crm/
 Disallow: /admin
 
 Sitemap: https://techinrent.com/sitemap.xml
+Sitemap: https://techinrent.com/blog-sitemap.xml
