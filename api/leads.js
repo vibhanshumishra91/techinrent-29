@@ -26,6 +26,20 @@ module.exports = async (req, res) => {
 
     if (req.method === 'POST') {
       const b = readBody(req);
+
+      // Bulk import: { leads: [ {name,email,phone,company,service,ownerId?}, ... ] }
+      if (Array.isArray(b.leads)) {
+        const now = Date.now();
+        const batch = b.leads.slice(0, 3000).map((item) => ({
+          id: crm.rid('ld'), name: String(item.name || 'Unknown').trim(), email: item.email || '', phone: item.phone || '',
+          company: item.company || '', service: item.service || 'Lead Generation', source: item.source || 'Import',
+          stage: item.stage || 'New Lead', ownerId: isMgr(me) ? (item.ownerId || null) : me.uid, value: +item.value || 0,
+          followUpAt: null, notes: [], activities: [{ ts: now, by: me.uid, type: 'created', text: 'Lead imported' }], createdAt: now,
+        })).filter((l) => l.name && l.name !== 'Unknown' || true);
+        await crm.putMany('leads', batch);
+        return res.status(201).json({ created: batch.length, leads: batch });
+      }
+
       const now = Date.now();
       const lead = {
         id: crm.rid('ld'), name: (b.name || 'Unknown').trim(), email: b.email || '', phone: b.phone || '',
@@ -39,6 +53,24 @@ module.exports = async (req, res) => {
 
     if (req.method === 'PATCH') {
       const b = readBody(req);
+
+      // Bulk assign: { ids: [...], ownerId } — manager only
+      if (Array.isArray(b.ids)) {
+        if (!isMgr(me)) return res.status(403).json({ error: 'Manager only' });
+        const owner = b.ownerId || null;
+        let n = 0;
+        const updated = [];
+        for (const id of b.ids.slice(0, 3000)) {
+          const cur = await crm.get('leads', id);
+          if (!cur) continue;
+          cur.activities = cur.activities || [];
+          cur.activities.push({ ts: Date.now(), by: me.uid, type: 'assign', text: 'Assigned via bulk action' });
+          const u = await crm.patch('leads', id, { ownerId: owner, activities: cur.activities });
+          if (u) { n++; updated.push(u); }
+        }
+        return res.status(200).json({ updated: n, leads: updated });
+      }
+
       if (!b.id) return res.status(400).json({ error: 'id required' });
       const cur = await crm.get('leads', b.id);
       if (!cur) return res.status(404).json({ error: 'Lead not found' });

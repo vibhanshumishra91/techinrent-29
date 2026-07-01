@@ -417,12 +417,35 @@ function filterLeads(forSDR){
   if(S.leadSearch){ const q=S.leadSearch.toLowerCase(); ls=ls.filter(l=>(l.name+l.company+l.email).toLowerCase().includes(q)); }
   return ls;
 }
+let LEADSEL = new Set();
+function toggleLeadSel(id,checked){ if(checked) LEADSEL.add(id); else LEADSEL.delete(id); renderContent(); }
+function toggleAllLeads(checked, ids){ (ids||[]).forEach(id=> checked?LEADSEL.add(id):LEADSEL.delete(id)); renderContent(); }
+function clearLeadSel(){ LEADSEL.clear(); renderContent(); }
+function bulkAssign(){
+  const sel=document.getElementById('bulk-owner'); const owner=sel?sel.value:'';
+  const ids=[...LEADSEL]; if(!ids.length){ toast('Select some leads first'); return; }
+  apiReq('/api/leads','PATCH',{ids,ownerId:owner||null}).then(j=>{
+    LEADSEL.clear();
+    bootstrapData().finally(()=>{ renderContent(); toast((j.updated||ids.length)+' leads assigned'+(owner?' to '+userName(owner):'')); });
+  }).catch(e=>{ if(e.message!=='unauth') toast(e.message); });
+}
 function leadsView(forSDR){
   const ls=filterLeads(forSDR);
-  return leadFilters(forSDR)+`
+  const ids=ls.map(l=>l.id);
+  const allSel = ids.length>0 && ids.every(id=>LEADSEL.has(id));
+  const sdrs=db.users.filter(u=>u.role==='sdr');
+  const bulkBar = (!forSDR && LEADSEL.size>0) ? `<div id="bulk-bar" class="toolbar" style="background:#eef5ff;border:1px solid var(--blue);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+    <b>${LEADSEL.size} selected</b>
+    <select id="bulk-owner" style="min-width:170px"><option value="">Unassigned</option>${sdrs.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
+    <button class="btn btn-primary btn-sm" onclick="bulkAssign()">Assign to SDR</button>
+    <button class="btn btn-ghost btn-sm" onclick="clearLeadSel()">Clear</button>
+  </div>` : '';
+  const cols = forSDR ? 7 : 9;
+  return leadFilters(forSDR)+bulkBar+`
   <div class="panel"><div class="table-scroll"><table class="tbl">
-    <thead><tr><th>Lead</th><th>Company</th><th>Service</th><th>Stage</th>${forSDR?'':'<th>Owner</th>'}<th>Source</th><th>Value</th><th>Follow-up</th></tr></thead>
+    <thead><tr>${forSDR?'':`<th style="width:34px"><input type="checkbox" ${allSel?'checked':''} onclick="toggleAllLeads(this.checked, ${JSON.stringify(ids).replace(/"/g,'&quot;')})"></th>`}<th>Lead</th><th>Company</th><th>Service</th><th>Stage</th>${forSDR?'':'<th>Owner</th>'}<th>Source</th><th>Value</th><th>Follow-up</th></tr></thead>
     <tbody>${ls.length?ls.map(l=>`<tr style="cursor:pointer" onclick="openLead('${l.id}')">
+      ${forSDR?'':`<td onclick="event.stopPropagation()"><input type="checkbox" ${LEADSEL.has(l.id)?'checked':''} onclick="toggleLeadSel('${l.id}',this.checked)"></td>`}
       <td><div class="nm">${esc(l.name)}</div><div class="sub">${esc(l.email)}</div></td>
       <td>${esc(l.company)||'—'}</td><td>${esc(l.service)}</td>
       <td><span class="stage ${STAGE_CLASS[l.stage]}">${l.stage}</span></td>
@@ -430,7 +453,7 @@ function leadsView(forSDR){
       <td><span class="pill2">${esc(l.source)}</span></td>
       <td>${l.value?money(l.value):'—'}</td>
       <td>${l.followUpAt?`<span style="color:${l.followUpAt<Date.now()?'var(--red)':'var(--slate)'}">${fmt(l.followUpAt)}</span>`:'—'}</td>
-    </tr>`).join(''):`<tr><td colspan="8"><div class="empty">No leads found.</div></td></tr>`}</tbody>
+    </tr>`).join(''):`<tr><td colspan="${cols}"><div class="empty">No leads found.</div></td></tr>`}</tbody>
   </table></div></div>`;
 }
 
@@ -962,7 +985,79 @@ function resetData(){ if(!confirm('Reset ALL CRM data to demo defaults?'))return
 function download(name,text){ const b=new Blob([text],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=name; a.click(); }
 function exportLeads(){ const h=['Name','Email','Phone','Company','Service','Stage','Owner','Source','Value','Created']; const rows=db.leads.map(l=>[l.name,l.email,l.phone,l.company,l.service,l.stage,userName(l.ownerId),l.source,l.value,fmt(l.createdAt)]); download('techinrent-leads.csv',[h,...rows].map(r=>r.map(c=>`"${String(c==null?'':c).replace(/"/g,'""')}"`).join(',')).join('\n')); toast('Leads exported'); }
 function exportAttendance(){ const h=['SDR','Date','ClockIn','ClockOut','Hours']; const rows=db.attendance.map(a=>[userName(a.userId),a.date,a.clockIn?fmtT(a.clockIn):'',a.clockOut?fmtT(a.clockOut):'',a.clockIn?(((a.clockOut||a.clockIn)-a.clockIn)/3600000).toFixed(1):'0']); download('techinrent-attendance.csv',[h,...rows].map(r=>r.map(c=>`"${c}"`).join(',')).join('\n')); toast('Attendance exported'); }
-function importLeads(input){ const f=input.files[0]; if(!f)return; const r=new FileReader(); r.onload=()=>{ const lines=String(r.result).split(/\r?\n/).filter(Boolean); let n=0; lines.forEach((line,i)=>{ if(i===0&&/name/i.test(line))return; const c=line.split(',').map(x=>x.replace(/^"|"$/g,'').trim()); if(c[0]){ db.leads.unshift(makeLead({name:c[0],email:c[1]||'',phone:c[2]||'',company:c[3]||'',service:c[4]||'Lead Generation',source:'Import'})); n++; } }); logActivity(`Imported ${n} leads from CSV`); save(); renderContent(); toast(n+' leads imported'); }; r.readAsText(f); }
+// Robust CSV line parser (handles quoted fields containing commas/newlines-escaped)
+function parseCSVLine(line){
+  const out=[]; let cur='', q=false;
+  for(let i=0;i<line.length;i++){ const ch=line[i];
+    if(q){ if(ch==='"'){ if(line[i+1]==='"'){cur+='"';i++;} else q=false; } else cur+=ch; }
+    else { if(ch==='"') q=true; else if(ch===',') { out.push(cur); cur=''; } else cur+=ch; }
+  }
+  out.push(cur); return out.map(s=>s.trim());
+}
+function mapCSVHeaders(cells){
+  const idx={name:-1,email:-1,phone:-1,company:-1,service:-1};
+  cells.forEach((h,i)=>{ const k=h.toLowerCase();
+    if(idx.name<0 && /(full.?name|^name$|contact.?name|lead.?name|^name)/.test(k)) idx.name=i;
+    if(idx.email<0 && /e-?mail/.test(k)) idx.email=i;
+    if(idx.phone<0 && /(phone|mobile|whats.?app|number|^tel)/.test(k)) idx.phone=i;
+    if(idx.company<0 && /(company|organi|business|firm|account)/.test(k)) idx.company=i;
+    if(idx.service<0 && /(service|interest|product|requirement)/.test(k)) idx.service=i;
+  });
+  if(idx.name<0){ // fall back: first column with a non-empty header that isn't email/phone
+    idx.name=0;
+  }
+  return idx;
+}
+let _csv={rows:[],header:true,map:{}};
+function importLeads(input){
+  const f=input.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    const rows=String(r.result).split(/\r?\n/).filter(l=>l.trim().length).map(parseCSVLine);
+    input.value='';
+    if(!rows.length){ toast('That CSV looks empty'); return; }
+    const hasHeader=/name|e-?mail|phone|mobile|company/i.test(rows[0].join(','));
+    _csv={rows, header:hasHeader};
+    _csv.map = hasHeader ? mapCSVHeaders(rows[0]) : {name:0,email:1,phone:2,company:3,service:4};
+    openImportMapper();
+  };
+  r.readAsText(f);
+}
+function openImportMapper(){
+  const cols=Math.max(..._csv.rows.map(r=>r.length));
+  const start=_csv.header?1:0;
+  const sample=_csv.rows.slice(start,start+3);
+  const fieldOpts=(sel)=>['','name','email','phone','company','service'].map(f=>`<option value="${f}" ${sel===f?'selected':''}>${f?f[0].toUpperCase()+f.slice(1):'— ignore —'}</option>`).join('');
+  const colToField=(i)=> Object.keys(_csv.map).find(k=>_csv.map[k]===i) || '';
+  let head=''; for(let i=0;i<cols;i++){ head+=`<th style="min-width:120px"><select id="map-col-${i}" style="width:100%">${fieldOpts(colToField(i))}</select><div class="t-meta" style="font-weight:400;margin-top:4px">${esc((_csv.header?(_csv.rows[0][i]||''):'Column '+(i+1)))}</div></th>`; }
+  const body=sample.map(row=>`<tr>${Array.from({length:cols}).map((_,i)=>`<td>${esc((row[i]||'').slice(0,32))}</td>`).join('')}</tr>`).join('')||'<tr><td>No data rows</td></tr>';
+  const total=_csv.rows.length-start;
+  modal(`<div class="modal" onclick="event.stopPropagation()" style="max-width:780px">
+    <div class="modal-h"><h3>Import leads — map your columns</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="modal-b">
+      <label style="display:inline-flex;gap:8px;align-items:center;margin-bottom:10px"><input type="checkbox" id="map-header" ${_csv.header?'checked':''} onchange="_csv.header=this.checked; if(_csv.header){_csv.map=mapCSVHeaders(_csv.rows[0]);} else {_csv.map={name:0,email:1,phone:2,company:3,service:4};} openImportMapper()"> First row is a header</label>
+      <p class="t-meta" style="margin:0 0 10px">Pick which field each column maps to (we auto-guessed). <b>Name is required.</b> Preview of the first rows:</p>
+      <div class="table-scroll"><table class="tbl"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+    </div>
+    <div class="modal-f"><button class="btn btn-ghost" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="runImport(${cols})">Import ${total} leads</button></div>
+  </div>`);
+}
+function runImport(cols){
+  const map={};
+  for(let i=0;i<cols;i++){ const sel=document.getElementById('map-col-'+i); if(sel&&sel.value) map[sel.value]=i; }
+  if(map.name===undefined){ toast('Please map one column to Name'); return; }
+  const dataRows=_csv.rows.slice(_csv.header?1:0);
+  const get=(row,fld)=> map[fld]!==undefined && map[fld]<row.length ? (row[map[fld]]||'').trim() : '';
+  const leads=[];
+  dataRows.forEach(row=>{ const name=get(row,'name'); if(!name) return;
+    leads.push({ name, email:get(row,'email'), phone:get(row,'phone'), company:get(row,'company'), service:get(row,'service')||'Lead Generation', source:'Import' });
+  });
+  if(!leads.length){ toast('No rows with a Name found'); return; }
+  closeModal(); toast('Importing '+leads.length+' leads…');
+  apiReq('/api/leads','POST',{leads}).then(j=>{
+    bootstrapData().finally(()=>{ renderContent(); toast((j.created||leads.length)+' leads imported ✓'); });
+  }).catch(e=>{ if(e.message!=='unauth') toast('Import failed: '+e.message); });
+}
 
 /* ============================================================
    DEMO BOOKINGS (server-side, persistent across devices)
