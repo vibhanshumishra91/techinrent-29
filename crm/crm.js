@@ -136,7 +136,11 @@ mergeInbox();
 /* ---------- auth ---------- */
 function session(){ try{ return JSON.parse(localStorage.getItem(SESS_KEY)); }catch(e){ return null; } }
 function currentUser(){ const s=session(); return s? db.users.find(u=>u.id===s.id):null; }
-function logActivity(action){ const u=currentUser(); db.activityLogs.unshift({ts:Date.now(),userId:u?u.id:'system',action}); save(); }
+function logActivity(action){
+  const u=currentUser();
+  db.activityLogs.unshift({id:'ac_'+Date.now(),ts:Date.now(),userId:u?u.id:'system',userName:u?u.name:'System',action}); save();
+  if(API_TOKEN){ fetch('/api/activity',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+API_TOKEN},body:JSON.stringify({action})}).catch(function(){}); }
+}
 function userName(id){ const u=db.users.find(x=>x.id===id); return u?u.name:'Unassigned'; }
 function initials(n){ return (n||'?').split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase(); }
 
@@ -204,10 +208,11 @@ function apiLogout(){ API_TOKEN=null; try{ sessionStorage.removeItem('tir_api_to
 async function bootstrapData(){
   if(!API_TOKEN) return;
   try{
-    const r=await Promise.allSettled([apiReqSafe('/api/leads'),apiReqSafe('/api/reports'),apiReqSafe('/api/attendance')]);
+    const r=await Promise.allSettled([apiReqSafe('/api/leads'),apiReqSafe('/api/reports'),apiReqSafe('/api/attendance'),apiReqSafe('/api/activity')]);
     if(r[0].status==='fulfilled'&&r[0].value) db.leads=r[0].value.leads||[];
     if(r[1].status==='fulfilled'&&r[1].value) db.dailyReports=r[1].value.reports||[];
     if(r[2].status==='fulfilled'&&r[2].value) db.attendance=r[2].value.attendance||[];
+    if(r[3].status==='fulfilled'&&r[3].value) db.activityLogs=r[3].value.logs||[];
     save();
   }catch(e){}
 }
@@ -276,7 +281,7 @@ function togglePw(id, btn){
 
 const MANAGER_NAV=[
   {g:'Overview',items:[['dashboard','📊','Dashboard']]},
-  {g:'Sales',items:[['bookings','📅','Demo Bookings'],['leads','🎯','Lead Management'],['pipeline','🔀','Sales Pipeline'],['inquiries','📥','Website Inquiries']]},
+  {g:'Sales',items:[['bookings','📅','Demo Bookings'],['leads','🎯','Lead Management'],['pipeline','🔀','Sales Pipeline']]},
   {g:'Team',items:[['users','👥','SDR / Users'],['attendance','🕘','Attendance'],['dailyreports','🗒️','Daily Reports'],['activity','📜','Activity Logs']]},
   {g:'Content',items:[['blog','📝','Blog Management'],['partners','🤝','Partners']]},
   {g:'Insights',items:[['reports','📈','Reports & Analytics']]},
@@ -291,7 +296,8 @@ const SDR_NAV=[
 
 function appShell(u){
   const nav = u.role==='manager'?MANAGER_NAV:SDR_NAV;
-  const unread = db.notifications.filter(n=>!n.read).length;
+  const _seen = parseInt(localStorage.getItem('tir_notif_seen'))||0;
+  const unread = db.activityLogs.filter(a=> (a.ts||0) > _seen && String(a.userId)!==String(u.id)).length;
   const pendingBlogs = 0;
   let navHtml='';
   nav.forEach(grp=>{
@@ -335,14 +341,14 @@ function toggleSidebar(){ S.sidebarOpen=!S.sidebarOpen; const sb=$('#sidebar'); 
 
 function renderContent(){
   const u=currentUser(); if(!u) return;
-  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',inquiries:'Website Inquiries',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',dailyreports:'SDR Daily Reports',activity:'Activity Logs',blog:'Blog Management',partners:'Partners & Clients',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',performance:'My Performance',profile:'My Profile'};
+  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',dailyreports:'SDR Daily Reports',activity:'Activity Logs',blog:'Blog Management',partners:'Partners & Clients',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',performance:'My Performance',profile:'My Profile'};
   const tt=$('#view-title'); if(tt) tt.textContent=titles[S.view]||'';
   const c=$('#content'); if(!c) return;
   const allowedSDR=['dashboard','myleads','attendance','daily','performance','profile'];
   if(u.role==='sdr' && !allowedSDR.includes(S.view)) S.view='dashboard';
   let html='';
   if(u.role==='manager'){
-    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,inquiries:inquiriesView,users:usersView,attendance:mgrAttendance,dailyreports:mgrDailyReports,activity:activityView,blog:blogView,partners:partnersView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
+    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,users:usersView,attendance:mgrAttendance,dailyreports:mgrDailyReports,activity:activityView,blog:blogView,partners:partnersView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
   } else {
     html=({dashboard:sdrDashboard,myleads:()=>leadsView(true),attendance:sdrAttendance,daily:dailyView,blog:blogView,performance:perfView,profile:profileView}[S.view]||sdrDashboard)();
   }
@@ -513,9 +519,15 @@ function mgrDailyReports(){
   <div class="kpis" style="margin-bottom:14px">${kpi(reps.length,'Reports','🗒️')}${kpi(totalCalls,'Total Calls','📞')}${kpi(totalMeet,'Total Meetings','📅')}</div>
   <div class="panel"><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Date</th><th>Calls</th><th>Meetings</th><th>Summary</th><th>Call proof</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
-function activityView(){
-  return `<div class="panel"><div class="panel-h"><h3>System activity logs</h3><span class="pill2">${db.activityLogs.length} events</span></div>
-  <div class="panel-b"><ul class="timeline">${db.activityLogs.slice(0,40).map(a=>`<li><div class="t-txt">${esc(a.action)}</div><div class="t-meta">${esc(userName(a.userId))} · ${fmtT(a.ts)}</div></li>`).join('')}</ul></div></div>`;
+function activityView(){ setTimeout(loadActivity,0); return `<div id="activity-root"><div class="empty">Loading team activity…</div></div>`; }
+async function loadActivity(){
+  const root=document.getElementById('activity-root'); if(!root) return;
+  try{ const j=await apiReq('/api/activity','GET'); db.activityLogs=j.logs||[]; save(); root.innerHTML=activityTableHTML(); }
+  catch(e){ if(e.message!=='unauth') root.innerHTML='<div class="panel"><div class="panel-b"><div class="empty">Could not load activity.</div></div></div>'; }
+}
+function activityTableHTML(){
+  return `<div class="panel"><div class="panel-h"><h3>Team activity logs</h3><span class="pill2">${db.activityLogs.length} events</span><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="loadActivity()">↻ Refresh</button></div>
+  <div class="panel-b"><ul class="timeline">${db.activityLogs.slice(0,80).map(a=>`<li><div class="t-txt">${esc(a.action)}</div><div class="t-meta">${esc(a.userName||userName(a.userId))} · ${fmtT(a.ts)}</div></li>`).join('')||'<li><div class="t-txt">No activity yet.</div></li>'}</ul></div></div>`;
 }
 
 let POSTS=[];
@@ -917,9 +929,11 @@ function savePartner(e,id){
 function deletePartner(id){ if(!confirm('Remove this partner?'))return; (async()=>{ try{ await apiReq('/api/partners','DELETE',{id}); loadPartners(); toast('Partner removed'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })(); }
 
 function openNotifs(){
+  const me=currentUser();
+  const items=db.activityLogs.filter(a=> String(a.userId)!==String(me.id)).slice(0,25);
   modal(`<div class="modal" onclick="event.stopPropagation()" style="max-width:460px">
     <div class="modal-h"><h3>Notifications</h3><button class="x" onclick="closeModal()">×</button></div>
-    <div class="modal-b">${db.notifications.length?db.notifications.slice(0,30).map(n=>`<div class="note-item" style="${n.read?'opacity:.6':''}">${esc(n.text)}<div class="m">${ago(n.ts)}</div></div>`).join(''):'<div class="empty">No notifications.</div>'}</div>
+    <div class="modal-b">${items.length?items.map(n=>`<div class="note-item">${esc(n.action)}<div class="m">${esc(n.userName||userName(n.userId))} · ${ago(n.ts)}</div></div>`).join(''):'<div class="empty">No new activity.</div>'}</div>
     <div class="modal-f"><button class="btn btn-ghost" onclick="markNotifs()">Mark all read</button><button class="btn btn-primary" onclick="closeModal()">Close</button></div>
   </div>`);
 }
@@ -978,7 +992,7 @@ function clockOut(){ apiReq('/api/attendance','POST',{action:'out'}).then(j=>{ i
 function submitDaily(){ const calls=+$('#dr-calls').value||0,meetings=+$('#dr-meet').value||0,summary=$('#dr-sum').value.trim(); const image=_drImg||null; apiReq('/api/reports','POST',{calls,meetings,summary,image}).then(j=>{ if(j.report) db.dailyReports.unshift(j.report); _drImg=null; save(); renderContent(); toast('Report submitted'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message==='Image too large — please use a smaller screenshot'?e.message:'Could not submit report'); }); }
 
 function saveSettings(){ db.settings={company:$('#set-company').value,currency:$('#set-cur').value,email:$('#set-email').value,phone:$('#set-phone').value}; logActivity('Updated CRM settings'); save(); toast('Settings saved'); }
-function markNotifs(){ db.notifications.forEach(n=>n.read=true); save(); render(); openNotifs(); }
+function markNotifs(){ localStorage.setItem('tir_notif_seen', String(Date.now())); closeModal(); render(); toast('Marked all read'); }
 function resetData(){ if(!confirm('Reset ALL CRM data to demo defaults?'))return; localStorage.removeItem(DB_KEY); db=load(); render(); toast('Data reset'); }
 
 /* CSV export/import */

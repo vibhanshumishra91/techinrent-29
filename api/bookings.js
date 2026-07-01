@@ -37,6 +37,11 @@ module.exports = async (req, res) => {
         createdAt: Date.now()
       };
       await store.addBooking(booking);
+      // Surface the new booking in the shared activity feed / notifications bell.
+      try {
+        const crm = require('../lib/crmstore');
+        await crm.put('activity', { id: crm.rid('ac'), userId: 'system', userName: 'Website', action: 'New demo booking from ' + (booking.fullName || 'a visitor'), ts: Date.now() });
+      } catch (e) { /* never block a booking on the activity log */ }
       return res.status(201).json({ ok: true, id: booking.id });
     }
 
