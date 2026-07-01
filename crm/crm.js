@@ -282,7 +282,7 @@ function togglePw(id, btn){
 const MANAGER_NAV=[
   {g:'Overview',items:[['dashboard','📊','Dashboard']]},
   {g:'Sales',items:[['bookings','📅','Demo Bookings'],['leads','🎯','Lead Management'],['pipeline','🔀','Sales Pipeline']]},
-  {g:'Team',items:[['users','👥','SDR / Users'],['attendance','🕘','Attendance'],['dailyreports','🗒️','Daily Reports'],['activity','📜','Activity Logs']]},
+  {g:'Team',items:[['users','👥','SDR / Users'],['attendance','🕘','Attendance'],['dailyreports','🗒️','Daily Reports'],['leaverequests','🌴','Leave Requests'],['activity','📜','Activity Logs']]},
   {g:'Content',items:[['blog','📝','Blog Management'],['partners','🤝','Partners']]},
   {g:'Insights',items:[['reports','📈','Reports & Analytics']]},
   {g:'System',items:[['profile','👤','My Profile'],['settings','⚙️','CRM Settings']]}
@@ -290,7 +290,7 @@ const MANAGER_NAV=[
 const SDR_NAV=[
   {g:'Overview',items:[['dashboard','📊','My Dashboard']]},
   {g:'Sales',items:[['myleads','🎯','My Leads']]},
-  {g:'My Day',items:[['attendance','🕘','Attendance & Time'],['daily','🗒️','Daily Report']]},
+  {g:'My Day',items:[['attendance','🕘','Attendance & Time'],['daily','🗒️','Daily Report'],['leaves','🌴','Leave']]},
   {g:'Me',items:[['performance','🏆','My Performance'],['profile','👤','My Profile']]}
 ];
 
@@ -341,16 +341,16 @@ function toggleSidebar(){ S.sidebarOpen=!S.sidebarOpen; const sb=$('#sidebar'); 
 
 function renderContent(){
   const u=currentUser(); if(!u) return;
-  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',dailyreports:'SDR Daily Reports',activity:'Activity Logs',blog:'Blog Management',partners:'Partners & Clients',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',performance:'My Performance',profile:'My Profile'};
+  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',dailyreports:'SDR Daily Reports',leaverequests:'Leave Requests',activity:'Activity Logs',blog:'Blog Management',partners:'Partners & Clients',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',leaves:'My Leave',performance:'My Performance',profile:'My Profile'};
   const tt=$('#view-title'); if(tt) tt.textContent=titles[S.view]||'';
   const c=$('#content'); if(!c) return;
-  const allowedSDR=['dashboard','myleads','attendance','daily','performance','profile'];
+  const allowedSDR=['dashboard','myleads','attendance','daily','leaves','performance','profile'];
   if(u.role==='sdr' && !allowedSDR.includes(S.view)) S.view='dashboard';
   let html='';
   if(u.role==='manager'){
-    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,users:usersView,attendance:mgrAttendance,dailyreports:mgrDailyReports,activity:activityView,blog:blogView,partners:partnersView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
+    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,users:usersView,attendance:mgrAttendance,dailyreports:mgrDailyReports,leaverequests:mgrLeaveView,activity:activityView,blog:blogView,partners:partnersView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
   } else {
-    html=({dashboard:sdrDashboard,myleads:()=>leadsView(true),attendance:sdrAttendance,daily:dailyView,blog:blogView,performance:perfView,profile:profileView}[S.view]||sdrDashboard)();
+    html=({dashboard:sdrDashboard,myleads:()=>leadsView(true),attendance:sdrAttendance,daily:dailyView,leaves:leaveView,blog:blogView,performance:perfView,profile:profileView}[S.view]||sdrDashboard)();
   }
   c.innerHTML=html;
 }
@@ -518,6 +518,61 @@ function mgrDailyReports(){
   return `<div class="toolbar"><p style="margin:0;color:var(--muted)">Daily activity reports submitted by your SDRs — with call-log proof images.</p><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="refreshData()">↻ Refresh</button></div>
   <div class="kpis" style="margin-bottom:14px">${kpi(reps.length,'Reports','🗒️')}${kpi(totalCalls,'Total Calls','📞')}${kpi(totalMeet,'Total Meetings','📅')}</div>
   <div class="panel"><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Date</th><th>Calls</th><th>Meetings</th><th>Summary</th><th>Call proof</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+/* ---------- Leave management (SDR applies, manager approves) ---------- */
+let LEAVES=[]; let LEAVE_META={paidUsedThisMonth:0,paidPerMonth:1};
+async function loadLeaves(rootId){
+  const root=document.getElementById(rootId); if(!root) return;
+  try{ const j=await apiReq('/api/leaves','GET'); LEAVES=j.leaves||[]; LEAVE_META={paidUsedThisMonth:j.paidUsedThisMonth||0,paidPerMonth:j.paidPerMonth||1}; root.innerHTML = rootId==='mgr-leave-root'?mgrLeaveHTML():sdrLeaveHTML(); }
+  catch(e){ if(e.message!=='unauth') root.innerHTML='<div class="panel"><div class="panel-b"><div class="empty">Could not load leave data.</div></div></div>'; }
+}
+function leaveBadge(l){
+  if(l.status==='pending') return '<span class="pill2">Pending</span>';
+  if(l.status==='rejected') return '<span class="tag tag-off">Rejected</span>';
+  return `<span class="tag tag-on">Approved${l.paidDays>0?' · '+l.paidDays+' paid':''}${l.unpaidDays>0?' · '+l.unpaidDays+' unpaid':(l.paidDays>0?'':' · unpaid')}</span>`;
+}
+function leaveDates(l){ return esc(l.fromDate)+((l.toDate&&l.toDate!==l.fromDate)?' → '+esc(l.toDate):''); }
+function leaveView(){ setTimeout(()=>loadLeaves('sdr-leave-root'),0); return `<div id="sdr-leave-root"><div class="empty">Loading…</div></div>`; }
+function sdrLeaveHTML(){
+  const remaining=Math.max(0, LEAVE_META.paidPerMonth-LEAVE_META.paidUsedThisMonth);
+  const rows=LEAVES.length?LEAVES.map(l=>`<tr>
+    <td>${leaveDates(l)}</td><td>${l.days}</td><td>${esc(l.reason)}</td><td>${leaveBadge(l)}</td>
+    <td>${l.status==='pending'?`<button class="btn btn-ghost btn-sm" onclick="cancelLeave('${l.id}')">Cancel</button>`:(l.managerNote?('<span class="t-meta">"'+esc(l.managerNote)+'"</span>'):'—')}</td>
+  </tr>`).join(''):`<tr><td colspan="5"><div class="empty">No leave requests yet.</div></td></tr>`;
+  return `<div class="row-2">
+    <div class="panel"><div class="panel-h"><h3>Apply for leave</h3></div><div class="panel-b">
+      <div class="grid-2c">
+        <div class="fld"><label>From date</label><input id="lv-from" type="date"></div>
+        <div class="fld"><label>To date</label><input id="lv-to" type="date"></div>
+      </div>
+      <div class="fld"><label>Reason</label><textarea id="lv-reason" rows="3" placeholder="Why do you need this leave?"></textarea></div>
+      <button class="btn btn-primary" onclick="applyLeave()">Submit request</button>
+      <p class="t-meta" style="margin-top:10px">🌴 Paid leave this month: <b>${remaining}</b> of ${LEAVE_META.paidPerMonth} left. Extra days are unpaid. A manager reviews every request.</p>
+    </div></div>
+    <div class="panel"><div class="panel-h"><h3>My requests</h3><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="loadLeaves('sdr-leave-root')">↻</button></div>
+      <div class="table-scroll"><table class="tbl"><thead><tr><th>Dates</th><th>Days</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>
+  </div>`;
+}
+function applyLeave(){
+  const fromDate=$('#lv-from').value, toDate=$('#lv-to').value||$('#lv-from').value, reason=$('#lv-reason').value.trim();
+  if(!fromDate){ toast('Please pick a from date'); return; }
+  if(!reason){ toast('Please add a reason'); return; }
+  apiReq('/api/leaves','POST',{fromDate,toDate,reason}).then(()=>{ logActivity('Applied for leave ('+fromDate+')'); loadLeaves('sdr-leave-root'); toast('Leave request submitted ✓'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); });
+}
+function cancelLeave(id){ if(!confirm('Cancel this leave request?'))return; apiReq('/api/leaves','DELETE',{id}).then(()=>{ loadLeaves('sdr-leave-root'); toast('Request cancelled'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); }); }
+function mgrLeaveView(){ setTimeout(()=>loadLeaves('mgr-leave-root'),0); return `<div id="mgr-leave-root"><div class="empty">Loading…</div></div>`; }
+function mgrLeaveHTML(){
+  const pending=LEAVES.filter(l=>l.status==='pending').length;
+  const rows=LEAVES.length?LEAVES.map(l=>`<tr>
+    <td class="nm">${esc(l.userName||userName(l.userId))}</td><td>${leaveDates(l)}</td><td>${l.days}</td><td>${esc(l.reason)}</td><td>${leaveBadge(l)}</td>
+    <td>${l.status==='pending'?`<button class="btn btn-primary btn-sm" onclick="decideLeave('${l.id}','approved')">Approve</button> <button class="btn btn-danger btn-sm" onclick="decideLeave('${l.id}','rejected')">Reject</button>`:(l.decidedByName?('<span class="t-meta">by '+esc(l.decidedByName)+'</span>'):'—')}</td>
+  </tr>`).join(''):`<tr><td colspan="6"><div class="empty">No leave requests yet.</div></td></tr>`;
+  return `<div class="toolbar"><p style="margin:0;color:var(--muted)">Policy: <b>1 paid leave/month</b> per SDR — extra days auto-marked unpaid on approval.</p><div class="spacer"></div><span class="pill2">${pending} pending</span><button class="btn btn-ghost btn-sm" onclick="loadLeaves('mgr-leave-root')">↻ Refresh</button></div>
+  <div class="panel"><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Dates</th><th>Days</th><th>Reason</th><th>Status</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+function decideLeave(id,status){
+  const note = status==='rejected' ? (prompt('Reason for rejection (optional):')||'') : '';
+  apiReq('/api/leaves','PATCH',{id,status,note}).then(j=>{ const l=j.leave; logActivity((status==='approved'?'Approved':'Rejected')+' leave for '+(l?l.userName:'SDR')); loadLeaves('mgr-leave-root'); toast('Leave '+status); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); });
 }
 function activityView(){ setTimeout(loadActivity,0); return `<div id="activity-root"><div class="empty">Loading team activity…</div></div>`; }
 async function loadActivity(){
