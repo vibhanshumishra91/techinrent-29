@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "verifycheck",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/vibhanshumishra/Claude/Projects/VerifyCheck", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}
