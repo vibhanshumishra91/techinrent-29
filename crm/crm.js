@@ -491,17 +491,47 @@ function usersView(){
   </table></div></div>`;
 }
 
+function attMonth(dateStr){ return String(dateStr||'').slice(0,7); }
+function weekdaysSoFar(ym){ // Mon–Fri count in a month, up to today for the current month
+  const p=ym.split('-'); const y=+p[0], m=+p[1]; const now=new Date();
+  const end=(y===now.getFullYear()&&m-1===now.getMonth())?now.getDate():new Date(y,m,0).getDate();
+  let n=0; for(let d=1;d<=end;d++){ const wd=new Date(y,m-1,d).getDay(); if(wd!==0&&wd!==6) n++; } return n;
+}
+function attHours(a){ return a.clockIn?(((a.clockOut||Date.now())-a.clockIn)/3600000).toFixed(1):'0.0'; }
 function mgrAttendance(){
-  const t=todayStr();
-  const rows=db.users.filter(u=>u.role==='sdr').map(u=>{
-    const rec=db.attendance.find(a=>a.userId===u.id&&a.date===t);
-    const hrs=rec&&rec.clockIn?(((rec.clockOut||Date.now())-rec.clockIn)/3600000).toFixed(1):'0.0';
-    return `<tr><td class="nm">${esc(u.name)}</td><td>${rec?'<span class="tag tag-on">Present</span>':'<span class="tag tag-off">Absent</span>'}</td><td>${rec&&rec.clockIn?fmtT(rec.clockIn):'—'}</td><td>${rec&&rec.clockOut?fmtT(rec.clockOut):(rec?'<span class="t-meta">active</span>':'—')}</td><td>${hrs} h</td></tr>`;
-  }).join('');
-  const hist=db.attendance.slice().sort((a,b)=>b.clockIn-a.clockIn).slice(0,12).map(a=>`<tr><td class="nm">${esc(userName(a.userId))}</td><td>${a.date}</td><td>${a.clockIn?fmtT(a.clockIn):'—'}</td><td>${a.clockOut?fmtT(a.clockOut):'—'}</td></tr>`).join('');
-  return `<div class="toolbar"><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="exportAttendance()">⬇ Export CSV</button></div>
-  <div class="panel"><div class="panel-h"><h3>Today — ${t}</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th></tr></thead><tbody>${rows}</tbody></table></div></div>
-  <div class="panel"><div class="panel-h"><h3>Attendance history</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Date</th><th>In</th><th>Out</th></tr></thead><tbody>${hist}</tbody></table></div></div>`;
+  const sdrs=db.users.filter(u=>u.role==='sdr');
+  const sel=S.attSdr||''; const t=todayStr();
+  // Today status (all SDRs)
+  const todayRows=sdrs.map(u=>{ const rec=db.attendance.find(a=>a.userId===u.id&&a.date===t);
+    return `<tr><td class="nm">${esc(u.name)}</td><td>${rec?'<span class="tag tag-on">Present</span>':'<span class="tag tag-off">Absent</span>'}</td><td>${rec&&rec.clockIn?fmtT(rec.clockIn):'—'}</td><td>${rec&&rec.clockOut?fmtT(rec.clockOut):(rec?'<span class="t-meta">active</span>':'—')}</td><td>${rec?attHours(rec):'0.0'} h</td></tr>`;
+  }).join('')||`<tr><td colspan="5"><div class="empty">No SDRs yet.</div></td></tr>`;
+  // History (filtered by SDR)
+  let recs=db.attendance.slice(); if(sel) recs=recs.filter(a=>a.userId===sel);
+  recs.sort((a,b)=>(b.clockIn||0)-(a.clockIn||0));
+  const histRows=recs.length?recs.slice(0,80).map(a=>`<tr><td class="nm">${esc(a.userName||userName(a.userId))}</td><td>${esc(a.date)}</td><td><span class="tag tag-on">Present</span></td><td>${a.clockIn?fmtT(a.clockIn):'—'}</td><td>${a.clockOut?fmtT(a.clockOut):'—'}</td><td>${attHours(a)} h</td></tr>`).join(''):`<tr><td colspan="6"><div class="empty">No attendance records${sel?' for this SDR':''} yet.</div></td></tr>`;
+  // Monthly totals (side)
+  const byMonth={}; recs.forEach(a=>{ const mk=attMonth(a.date); if(!mk)return; (byMonth[mk]=byMonth[mk]||new Set()).add(a.date); });
+  const months=Object.keys(byMonth).sort().reverse();
+  const side=months.length?months.map(mk=>{
+    const present=byMonth[mk].size;
+    const label=new Date(mk+'-01T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'});
+    if(sel){ const absent=Math.max(0,weekdaysSoFar(mk)-present); return `<div class="month-stat"><div class="ms-label">${label}</div><div class="ms-nums"><span class="tag tag-on">${present} present</span><span class="tag tag-off">${absent} absent</span></div></div>`; }
+    return `<div class="month-stat"><div class="ms-label">${label}</div><div class="ms-nums"><span class="tag tag-on">${present} present-days</span></div></div>`;
+  }).join(''):'<div class="empty">No data yet.</div>';
+  return `<div class="toolbar">
+    <label style="font-weight:700;color:var(--slate);font-size:.85rem">SDR</label>
+    <select onchange="S.attSdr=this.value;renderContent()"><option value="">All SDRs</option>${sdrs.map(u=>`<option value="${u.id}" ${sel===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select>
+    <div class="spacer"></div>
+    <button class="btn btn-ghost btn-sm" onclick="refreshData()">↻ Refresh</button>
+    <button class="btn btn-ghost btn-sm" onclick="exportAttendance()">⬇ Export CSV</button>
+  </div>
+  <div class="att-grid">
+    <div>
+      ${sel?'':`<div class="panel"><div class="panel-h"><h3>Today — ${t}</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th></tr></thead><tbody>${todayRows}</tbody></table></div></div>`}
+      <div class="panel"><div class="panel-h"><h3>${sel?esc(userName(sel))+' — record':'Attendance history'}</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Date</th><th>Status</th><th>In</th><th>Out</th><th>Hours</th></tr></thead><tbody>${histRows}</tbody></table></div></div>
+    </div>
+    <div class="panel att-side"><div class="panel-h"><h3>Monthly totals</h3></div><div class="panel-b">${side}${sel?'':'<p class="t-meta" style="margin-top:10px">Pick an SDR above to see present vs absent per month.</p>'}</div></div>
+  </div>`;
 }
 
 function mgrDailyReports(){
