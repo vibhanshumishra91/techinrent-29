@@ -492,10 +492,10 @@ function usersView(){
 }
 
 function attMonth(dateStr){ return String(dateStr||'').slice(0,7); }
-function weekdaysSoFar(ym){ // Mon–Fri count in a month, up to today for the current month
+function weekdaysSoFar(ym){ // Working days (Mon–Sat) in a month, up to today for the current month
   const p=ym.split('-'); const y=+p[0], m=+p[1]; const now=new Date();
   const end=(y===now.getFullYear()&&m-1===now.getMonth())?now.getDate():new Date(y,m,0).getDate();
-  let n=0; for(let d=1;d<=end;d++){ const wd=new Date(y,m-1,d).getDay(); if(wd!==0&&wd!==6) n++; } return n;
+  let n=0; for(let d=1;d<=end;d++){ const wd=new Date(y,m-1,d).getDay(); if(wd!==0) n++; } return n; // exclude Sunday only
 }
 function attHours(a){ return a.clockIn?(((a.clockOut||Date.now())-a.clockIn)/3600000).toFixed(1):'0.0'; }
 function mgrAttendance(){
@@ -797,11 +797,20 @@ function _compressImg(file, cb){
   reader.onload=function(e){
     const img=new Image();
     img.onload=function(){
-      const max=1200; let w=img.width, h=img.height;
-      if(w>max||h>max){ const s=Math.min(max/w,max/h); w=Math.round(w*s); h=Math.round(h*s); }
-      const c=document.createElement('canvas'); c.width=w; c.height=h;
-      c.getContext('2d').drawImage(img,0,0,w,h);
-      cb(c.toDataURL('image/jpeg',0.7));
+      const TARGET=900*1024; // aim for a data URL under ~900KB so it always fits
+      function render(maxDim, q){
+        let w=img.width, h=img.height;
+        if(w>maxDim||h>maxDim){ const s=Math.min(maxDim/w,maxDim/h); w=Math.round(w*s); h=Math.round(h*s); }
+        const c=document.createElement('canvas'); c.width=w; c.height=h;
+        const ctx=c.getContext('2d'); ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,w,h); // white bg (JPEG has no transparency)
+        ctx.drawImage(img,0,0,w,h);
+        return c.toDataURL('image/jpeg', q);
+      }
+      // Progressively shrink/lower quality until the screenshot fits comfortably.
+      const attempts=[[1500,0.75],[1300,0.65],[1100,0.55],[900,0.5],[750,0.45],[600,0.4]];
+      let out=render(attempts[0][0],attempts[0][1]);
+      for(var i=1;i<attempts.length && out.length>TARGET;i++){ out=render(attempts[i][0],attempts[i][1]); }
+      cb(out);
     };
     img.onerror=function(){ cb(null); };
     img.src=e.target.result;

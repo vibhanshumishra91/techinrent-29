@@ -10,7 +10,7 @@ function readBody(req) {
   return {};
 }
 const isMgr = (u) => u.role === 'manager' || u.role === 'admin';
-const MAX_IMG = 700 * 1024; // ~700KB cap on the data URL
+const MAX_IMG = 1600 * 1024; // ~1.6MB cap (client compresses well under this)
 
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');

@@ -9,7 +9,7 @@ function readBody(req) {
   if (typeof req.body === 'string') { try { return JSON.parse(req.body); } catch (e) { return {}; } }
   return {};
 }
-const MAX_IMG = 800 * 1024;
+const MAX_IMG = 1600 * 1024;
 
 function slugify(s) {
   return String(s || '').toLowerCase().trim()

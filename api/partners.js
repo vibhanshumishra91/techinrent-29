@@ -8,7 +8,7 @@ function readBody(req) {
   if (typeof req.body === 'string') { try { return JSON.parse(req.body); } catch (e) { return {}; } }
   return {};
 }
-const MAX_LOGO = 500 * 1024; // ~500KB data URL cap
+const MAX_LOGO = 1200 * 1024; // ~1.2MB data URL cap
 
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
