@@ -84,6 +84,7 @@ ${post.keywords ? `<meta name="keywords" content="${esc(post.keywords)}">` : ''}
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-8LEE6JD0MS"></script>
 <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-8LEE6JD0MS');</script>
 <script type="application/ld+json">${JSON.stringify(ld)}</script>
+<script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [{ '@type': 'ListItem', position: 1, name: 'Home', item: SITE + '/' }, { '@type': 'ListItem', position: 2, name: 'Blog', item: SITE + '/blog' }, { '@type': 'ListItem', position: 3, name: post.title, item: url }] })}</script>
 </head>
 <body>
 <div class="topbar"><div class="container"><div class="tb-left">🔒 Policy-Safe LinkedIn Growth · Trusted by 500+ B2B teams</div><div class="tb-right"><a href="tel:+917898711748">📞 +91 78987 11748</a><a href="mailto:vibhanshu@techinrent.com">✉️ vibhanshu@techinrent.com</a></div></div></div>
