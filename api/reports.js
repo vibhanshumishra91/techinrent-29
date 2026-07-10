@@ -19,15 +19,28 @@ module.exports = async (req, res) => {
   if (!crm.configured) return res.status(500).json({ error: 'Storage not configured' });
 
   try {
+    const today = new Date().toISOString().slice(0, 10);
+
     if (req.method === 'GET') {
       let reports = await crm.list('reports');
       if (!isMgr(me)) reports = reports.filter((r) => r.userId === me.uid);
       reports.sort((a, b) => (b.ts || 0) - (a.ts || 0));
-      return res.status(200).json({ reports });
+      const out = { reports };
+      // Daily call counts are a manager-only metric.
+      if (isMgr(me)) { try { out.callCountsToday = await crm.callCounts(today); } catch (e) { out.callCountsToday = {}; } }
+      return res.status(200).json(out);
     }
 
     if (req.method === 'POST') {
       const b = readBody(req);
+
+      // Lightweight call-tap counter (SDR taps "Call" → +1 for today). Manager-visible only.
+      if (b.action === 'call') {
+        let count = 0;
+        try { count = await crm.incrCall(me.uid, today); } catch (e) {}
+        return res.status(200).json({ ok: true, count });
+      }
+
       let image = null;
       if (b.image && typeof b.image === 'string' && b.image.startsWith('data:image/')) {
         if (b.image.length > MAX_IMG) return res.status(413).json({ error: 'Image too large — please use a smaller screenshot' });

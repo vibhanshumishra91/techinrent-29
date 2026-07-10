@@ -171,6 +171,9 @@ function logout(){ logActivity('Logged out'); localStorage.removeItem(SESS_KEY);
 
 /* ---------- demo bookings API (server-side, persistent) ---------- */
 let API_TOKEN = sessionStorage.getItem('tir_api_token') || null;
+let CALLCOUNTS = {}; // manager-only: {userId: calls today}
+// Count a call when an SDR taps "Call" (fire-and-forget; never blocks the dialer).
+function bumpCall(){ if(API_TOKEN){ try{ fetch('/api/reports',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+API_TOKEN},body:JSON.stringify({action:'call'})}).catch(function(){}); }catch(e){} } return true; }
 let BOOKINGS = [];
 let BOOKING_STATUSES = ['New','Contacted','Confirmed','Completed','Cancelled','No-show'];
 async function apiLogin(username, password){
@@ -210,7 +213,7 @@ async function bootstrapData(){
   try{
     const r=await Promise.allSettled([apiReqSafe('/api/leads'),apiReqSafe('/api/reports'),apiReqSafe('/api/attendance'),apiReqSafe('/api/activity')]);
     if(r[0].status==='fulfilled'&&r[0].value) db.leads=r[0].value.leads||[];
-    if(r[1].status==='fulfilled'&&r[1].value) db.dailyReports=r[1].value.reports||[];
+    if(r[1].status==='fulfilled'&&r[1].value){ db.dailyReports=r[1].value.reports||[]; CALLCOUNTS=r[1].value.callCountsToday||{}; }
     if(r[2].status==='fulfilled'&&r[2].value) db.attendance=r[2].value.attendance||[];
     if(r[3].status==='fulfilled'&&r[3].value) db.activityLogs=r[3].value.logs||[];
     save();
@@ -366,22 +369,28 @@ function mgrDashboard(){
   const openLeads=leads.filter(l=>!['Won','Lost'].includes(l.stage));
   const wonValue=won.reduce((a,l)=>a+ (+l.value||0),0);
   const dueFollow=leads.filter(l=>l.followUpAt&&l.followUpAt<=Date.now()+86400000&&!['Won','Lost'].includes(l.stage));
+  const callsToday=Object.values(CALLCOUNTS).reduce((a,b)=>a+(+b||0),0);
   return `
   <div class="kpis">
     ${kpi(leads.length,'Total Leads','🎯')}
     ${kpi(openLeads.length,'Open Pipeline','🔀')}
+    ${kpi(callsToday,'Calls Today','📞')}
     ${kpi(won.length,'Deals Won','🏆')}
     ${kpi(money(wonValue),'Won Value','💰')}
   </div>
   <div class="row-2">
     <div class="panel">
-      <div class="panel-h"><h3>Pipeline by stage</h3><button class="btn btn-ghost btn-sm" onclick="go('pipeline')">Open board →</button></div>
-      <div class="panel-b">${stageBars(leads)}</div>
+      <div class="panel-h"><h3>📞 Calls made today (by SDR)</h3><span class="pill2">${callsToday} total</span><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="refreshData()">↻</button></div>
+      <div class="panel-b">${callsTodayHTML()}</div>
     </div>
     <div class="panel">
       <div class="panel-h"><h3>SDR performance</h3></div>
       <div class="panel-b">${sdrBars()}</div>
     </div>
+  </div>
+  <div class="panel" style="margin-bottom:18px">
+    <div class="panel-h"><h3>Pipeline by stage</h3><button class="btn btn-ghost btn-sm" onclick="go('pipeline')">Open board →</button></div>
+    <div class="panel-b">${stageBars(leads)}</div>
   </div>
   <div class="row-2">
     <div class="panel">
@@ -398,6 +407,12 @@ function mgrDashboard(){
 function stageBars(leads){
   const max=Math.max(1,...STAGES.map(s=>leads.filter(l=>l.stage===s).length));
   return `<div class="bars">${STAGES.map(s=>{const n=leads.filter(l=>l.stage===s).length;return `<div class="bar-row"><span class="lbl">${s}</span><span class="bar-track"><span class="bar-fill" style="width:${n/max*100}%"></span></span><span class="vn">${n}</span></div>`;}).join('')}</div>`;
+}
+function callsTodayHTML(){
+  const sdrs=db.users.filter(u=>u.role==='sdr');
+  if(!sdrs.length) return '<div class="empty">No SDRs yet.</div>';
+  const max=Math.max(1,...sdrs.map(u=>+CALLCOUNTS[u.id]||0));
+  return `<div class="bars">${sdrs.map(u=>{const n=+CALLCOUNTS[u.id]||0;return `<div class="bar-row"><span class="lbl">${esc(u.name)}</span><span class="bar-track"><span class="bar-fill" style="width:${n/max*100}%"></span></span><span class="vn">${n}</span></div>`;}).join('')}</div>`;
 }
 function sdrBars(){
   const sdrs=db.users.filter(u=>u.role==='sdr');
@@ -453,7 +468,7 @@ function leadsView(forSDR){
     <tbody>${ls.length?ls.map(l=>`<tr style="cursor:pointer" onclick="openLead('${l.id}')">
       ${forSDR?'':`<td onclick="event.stopPropagation()"><input type="checkbox" ${LEADSEL.has(l.id)?'checked':''} onclick="toggleLeadSel('${l.id}',this.checked)"></td>`}
       <td><div class="nm">${esc(l.name)}</div><div class="sub">${esc(l.email)}</div></td>
-      <td onclick="event.stopPropagation()">${l.phone?`<a class="btn btn-primary btn-sm lead-call-sm" href="tel:${(l.phone||'').replace(/[^0-9+]/g,'')}" title="Call ${esc(l.phone)}">📞</a>`:'<span class="t-meta">—</span>'}</td>
+      <td onclick="event.stopPropagation()">${l.phone?`<a class="btn btn-primary btn-sm lead-call-sm" href="tel:${(l.phone||'').replace(/[^0-9+]/g,'')}" title="Call ${esc(l.phone)}" onclick="return bumpCall()">📞</a>`:'<span class="t-meta">—</span>'}</td>
       <td>${esc(l.company)||'—'}</td><td>${esc(l.service)}</td>
       <td><span class="stage ${STAGE_CLASS[l.stage]}">${l.stage}</span></td>
       ${forSDR?'':`<td>${esc(userName(l.ownerId))}</td>`}
@@ -697,7 +712,11 @@ function settingsView(){
       <tbody>${matrix.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}</tbody></table>
     </div></div>
   </div>
-  <div class="panel"><div class="panel-h"><h3>Danger zone</h3></div><div class="panel-b"><p style="color:var(--muted)">Reset all CRM data back to the original demo seed. This cannot be undone.</p><button class="btn btn-danger" onclick="resetData()">Reset CRM Data</button></div></div>`;
+  <div class="panel"><div class="panel-h"><h3>💾 Data &amp; backup</h3></div><div class="panel-b">
+    <p style="color:var(--muted);margin:0 0 12px">All your CRM data — leads, bookings, daily reports, attendance, activity — is saved <b>securely on the server</b> and synced across every device. It is <b>never lost</b> when you close or refresh the app; the browser only holds a temporary copy. Download a full backup anytime for extra peace of mind.</p>
+    <button class="btn btn-primary" onclick="downloadBackup()">⬇ Download Full Backup (JSON)</button>
+    <button class="btn btn-ghost" style="margin-left:8px" onclick="refreshData()">↻ Reload from server</button>
+  </div></div>`;
 }
 
 /* ============================================================
@@ -872,7 +891,7 @@ function openLead(id){
     <div class="modal-h"><h3>${esc(l.name)} <span class="stage ${STAGE_CLASS[l.stage]}" style="margin-left:8px">${l.stage}</span></h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="modal-b">
       <div class="lead-actions">
-        ${telNum?`<a class="btn btn-primary lead-call" href="tel:${telNum}">📞 Call ${esc(l.phone)}</a><a class="btn btn-wa2 lead-call" href="https://wa.me/${waNum}" target="_blank" rel="noopener">💬 WhatsApp</a>`:'<span class="t-meta">No phone number saved for this lead.</span>'}
+        ${telNum?`<a class="btn btn-primary lead-call" href="tel:${telNum}" onclick="return bumpCall()">📞 Call ${esc(l.phone)}</a><a class="btn btn-wa2 lead-call" href="https://wa.me/${waNum}" target="_blank" rel="noopener">💬 WhatsApp</a>`:'<span class="t-meta">No phone number saved for this lead.</span>'}
       </div>
       <div class="quick-stage"><span class="qs-label">Update status:</span>${quickStages.map(s=>`<button class="qs-btn ${l.stage===s?'qs-active':''}" onclick="updStage('${l.id}','${s}')">${s}</button>`).join('')}</div>
       <div class="grid-2c">
@@ -1110,6 +1129,22 @@ function resetData(){ if(!confirm('Reset ALL CRM data to demo defaults?'))return
 
 /* CSV export/import */
 function download(name,text){ const b=new Blob([text],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=name; a.click(); }
+/* Full JSON backup of all server data — a downloadable safety copy for the manager. */
+async function downloadBackup(){
+  if(!API_TOKEN){ toast('Please sign in again'); return; }
+  toast('Preparing backup…');
+  const auth={Authorization:'Bearer '+API_TOKEN};
+  const grab=async(p,key)=>{ try{ const r=await fetch(p,{headers:auth}); if(!r.ok) return []; const j=await r.json(); return j[key]||[]; }catch(e){ return []; } };
+  try{
+    const [users,leads,reports,attendance,activity,leaves,bookings,partners,posts]=await Promise.all([
+      grab('/api/users','users'),grab('/api/leads','leads'),grab('/api/reports','reports'),grab('/api/attendance','attendance'),
+      grab('/api/activity','logs'),grab('/api/leaves','leaves'),grab('/api/bookings','bookings'),grab('/api/partners','partners'),grab('/api/posts','posts')
+    ]);
+    const backup={exportedAt:new Date().toISOString(),users,leads,reports,attendance,activity,leaves,bookings,partners,posts};
+    download('techinrent-crm-backup-'+new Date().toISOString().slice(0,10)+'.json', JSON.stringify(backup,null,2));
+    toast('Backup downloaded ✓ ('+leads.length+' leads · '+bookings.length+' bookings)');
+  }catch(e){ toast('Backup failed — please try again'); }
+}
 function exportLeads(){ const h=['Name','Email','Phone','Company','Service','Stage','Owner','Source','Value','Created']; const rows=db.leads.map(l=>[l.name,l.email,l.phone,l.company,l.service,l.stage,userName(l.ownerId),l.source,l.value,fmt(l.createdAt)]); download('techinrent-leads.csv',[h,...rows].map(r=>r.map(c=>`"${String(c==null?'':c).replace(/"/g,'""')}"`).join(',')).join('\n')); toast('Leads exported'); }
 function exportAttendance(){ const h=['SDR','Date','ClockIn','ClockOut','Hours']; const rows=db.attendance.map(a=>[userName(a.userId),a.date,a.clockIn?fmtT(a.clockIn):'',a.clockOut?fmtT(a.clockOut):'',a.clockIn?(((a.clockOut||a.clockIn)-a.clockIn)/3600000).toFixed(1):'0']); download('techinrent-attendance.csv',[h,...rows].map(r=>r.map(c=>`"${c}"`).join(',')).join('\n')); toast('Attendance exported'); }
 // Robust CSV line parser (handles quoted fields containing commas/newlines-escaped)
