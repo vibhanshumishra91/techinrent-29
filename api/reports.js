@@ -45,6 +45,20 @@ module.exports = async (req, res) => {
       if (b.image && typeof b.image === 'string' && b.image.startsWith('data:image/')) {
         if (b.image.length > MAX_IMG) return res.status(413).json({ error: 'Image too large — please use a smaller screenshot' });
         image = b.image;
+        // Offload the screenshot to Vercel Blob (keeps the Redis DB lean).
+        // Falls back to inline storage if Blob is unavailable — a report is never rejected over storage.
+        if (process.env.BLOB_READ_WRITE_TOKEN) {
+          try {
+            const { put } = require('@vercel/blob');
+            const m = /^data:(image\/[a-zA-Z+]+);base64,(.*)$/.exec(b.image);
+            if (m) {
+              const ext = (m[1].split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+              const blob = await put('call-logs/' + me.uid + '-' + today + '-' + Date.now() + '.' + ext,
+                Buffer.from(m[2], 'base64'), { access: 'public', contentType: m[1] });
+              image = blob.url;
+            }
+          } catch (e) { /* keep inline data URL */ }
+        }
       }
       const report = {
         id: crm.rid('rp'), userId: me.uid, userName: me.name,
@@ -59,6 +73,14 @@ module.exports = async (req, res) => {
       if (!isMgr(me)) return res.status(403).json({ error: 'Only a manager can delete reports' });
       const b = readBody(req);
       if (!b.id) return res.status(400).json({ error: 'id required' });
+      // Best-effort: remove the offloaded Blob image too, so no orphan files pile up.
+      try {
+        const rep = await crm.get('reports', b.id);
+        if (rep && rep.image && /^https:\/\/.*\.blob\.vercel-storage\.com\//.test(rep.image) && process.env.BLOB_READ_WRITE_TOKEN) {
+          const { del } = require('@vercel/blob');
+          await del(rep.image);
+        }
+      } catch (e) { /* never block the delete */ }
       await crm.del('reports', b.id);
       return res.status(200).json({ ok: true });
     }
