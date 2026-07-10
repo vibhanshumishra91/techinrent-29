@@ -42,6 +42,14 @@ module.exports = async (req, res) => {
       return res.status(201).json({ report: await crm.put('reports', report) });
     }
 
+    if (req.method === 'DELETE') {
+      if (!isMgr(me)) return res.status(403).json({ error: 'Only a manager can delete reports' });
+      const b = readBody(req);
+      if (!b.id) return res.status(400).json({ error: 'id required' });
+      await crm.del('reports', b.id);
+      return res.status(200).json({ ok: true });
+    }
+
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (e) {
     return res.status(400).json({ error: (e && e.message) || 'Request failed' });

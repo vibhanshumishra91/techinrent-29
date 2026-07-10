@@ -535,7 +535,12 @@ function mgrAttendance(){
 }
 
 function mgrDailyReports(){
-  const reps=db.dailyReports.slice().sort((a,b)=>(b.ts||0)-(a.ts||0));
+  const sdrs=db.users.filter(u=>u.role==='sdr');
+  const sel=S.repSdr||''; const q=(S.repSearch||'').toLowerCase().trim();
+  let reps=db.dailyReports.slice();
+  if(sel) reps=reps.filter(r=>r.userId===sel);
+  if(q) reps=reps.filter(r=>((r.userName||userName(r.userId))+' '+(r.summary||'')+' '+(r.date||'')).toLowerCase().includes(q));
+  reps.sort((a,b)=>(b.ts||0)-(a.ts||0));
   const totalCalls=reps.reduce((a,r)=>a+(+r.calls||0),0), totalMeet=reps.reduce((a,r)=>a+(+r.meetings||0),0);
   const rows=reps.length?reps.map(r=>`<tr>
     <td class="nm">${esc(r.userName||userName(r.userId))}</td>
@@ -544,11 +549,18 @@ function mgrDailyReports(){
     <td>${r.meetings||0}</td>
     <td>${esc(r.summary||'')}</td>
     <td>${r.image?`<img src="${r.image}" alt="call log" title="Click to view" style="height:36px;border-radius:6px;cursor:pointer;border:1px solid var(--line)" onclick="openDailyImg('${r.id}')">`:'<span class="t-meta">—</span>'}</td>
-  </tr>`).join(''):`<tr><td colspan="6"><div class="empty">No SDR reports yet. They appear here as your team submits daily reports.</div></td></tr>`;
-  return `<div class="toolbar"><p style="margin:0;color:var(--muted)">Daily activity reports submitted by your SDRs — with call-log proof images.</p><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="refreshData()">↻ Refresh</button></div>
+    <td><button class="btn btn-danger btn-sm" onclick="deleteReport('${r.id}')">Delete</button></td>
+  </tr>`).join(''):`<tr><td colspan="7"><div class="empty">No reports found${(sel||q)?' for this filter':' yet'}.</div></td></tr>`;
+  return `<div class="toolbar">
+    <input type="search" placeholder="Search summary, SDR, date…" value="${esc(S.repSearch||'')}" oninput="S.repSearch=this.value;renderContent()">
+    <select onchange="S.repSdr=this.value;renderContent()"><option value="">All SDRs</option>${sdrs.map(u=>`<option value="${u.id}" ${sel===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select>
+    <div class="spacer"></div>
+    <button class="btn btn-ghost btn-sm" onclick="refreshData()">↻ Refresh</button>
+  </div>
   <div class="kpis" style="margin-bottom:14px">${kpi(reps.length,'Reports','🗒️')}${kpi(totalCalls,'Total Calls','📞')}${kpi(totalMeet,'Total Meetings','📅')}</div>
-  <div class="panel"><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Date</th><th>Calls</th><th>Meetings</th><th>Summary</th><th>Call proof</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  <div class="panel"><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Date</th><th>Calls</th><th>Meetings</th><th>Summary</th><th>Call proof</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
+function deleteReport(id){ if(!confirm('Delete this daily report permanently?'))return; apiReq('/api/reports','DELETE',{id}).then(()=>{ db.dailyReports=db.dailyReports.filter(x=>x.id!==id); logActivity('Deleted a daily report'); save(); renderContent(); toast('Report deleted'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); }); }
 /* ---------- Leave management (SDR applies, manager approves) ---------- */
 let LEAVES=[]; let LEAVE_META={paidUsedThisMonth:0,paidPerMonth:1};
 async function loadLeaves(rootId){
