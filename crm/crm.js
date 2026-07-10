@@ -446,13 +446,14 @@ function leadsView(forSDR){
     <button class="btn btn-primary btn-sm" onclick="bulkAssign()">Assign to SDR</button>
     <button class="btn btn-ghost btn-sm" onclick="clearLeadSel()">Clear</button>
   </div>` : '';
-  const cols = forSDR ? 7 : 9;
+  const cols = forSDR ? 8 : 10;
   return leadFilters(forSDR)+bulkBar+`
   <div class="panel"><div class="table-scroll"><table class="tbl">
-    <thead><tr>${forSDR?'':`<th style="width:34px"><input type="checkbox" ${allSel?'checked':''} onclick="toggleAllLeads(this.checked, ${JSON.stringify(ids).replace(/"/g,'&quot;')})"></th>`}<th>Lead</th><th>Company</th><th>Service</th><th>Stage</th>${forSDR?'':'<th>Owner</th>'}<th>Source</th><th>Value</th><th>Follow-up</th></tr></thead>
+    <thead><tr>${forSDR?'':`<th style="width:34px"><input type="checkbox" ${allSel?'checked':''} onclick="toggleAllLeads(this.checked, ${JSON.stringify(ids).replace(/"/g,'&quot;')})"></th>`}<th>Lead</th><th>Call</th><th>Company</th><th>Service</th><th>Stage</th>${forSDR?'':'<th>Owner</th>'}<th>Source</th><th>Value</th><th>Follow-up</th></tr></thead>
     <tbody>${ls.length?ls.map(l=>`<tr style="cursor:pointer" onclick="openLead('${l.id}')">
       ${forSDR?'':`<td onclick="event.stopPropagation()"><input type="checkbox" ${LEADSEL.has(l.id)?'checked':''} onclick="toggleLeadSel('${l.id}',this.checked)"></td>`}
       <td><div class="nm">${esc(l.name)}</div><div class="sub">${esc(l.email)}</div></td>
+      <td onclick="event.stopPropagation()">${l.phone?`<a class="btn btn-primary btn-sm lead-call-sm" href="tel:${(l.phone||'').replace(/[^0-9+]/g,'')}" title="Call ${esc(l.phone)}">📞</a>`:'<span class="t-meta">—</span>'}</td>
       <td>${esc(l.company)||'—'}</td><td>${esc(l.service)}</td>
       <td><span class="stage ${STAGE_CLASS[l.stage]}">${l.stage}</span></td>
       ${forSDR?'':`<td>${esc(userName(l.ownerId))}</td>`}
@@ -865,9 +866,15 @@ function openLead(id){
   const l=db.leads.find(x=>x.id===id); if(!l) return;
   const u=currentUser(); const mgr=u.role==='manager';
   const sdrs=db.users.filter(x=>x.role==='sdr');
+  const telNum=(l.phone||'').replace(/[^0-9+]/g,''); const waNum=(l.phone||'').replace(/[^0-9]/g,'');
+  const quickStages=['Contacted','Qualified','Demo Scheduled','Follow-up','Won','Lost'];
   modal(`<div class="modal" onclick="event.stopPropagation()">
     <div class="modal-h"><h3>${esc(l.name)} <span class="stage ${STAGE_CLASS[l.stage]}" style="margin-left:8px">${l.stage}</span></h3><button class="x" onclick="closeModal()">×</button></div>
     <div class="modal-b">
+      <div class="lead-actions">
+        ${telNum?`<a class="btn btn-primary lead-call" href="tel:${telNum}">📞 Call ${esc(l.phone)}</a><a class="btn btn-wa2 lead-call" href="https://wa.me/${waNum}" target="_blank" rel="noopener">💬 WhatsApp</a>`:'<span class="t-meta">No phone number saved for this lead.</span>'}
+      </div>
+      <div class="quick-stage"><span class="qs-label">Update status:</span>${quickStages.map(s=>`<button class="qs-btn ${l.stage===s?'qs-active':''}" onclick="updStage('${l.id}','${s}')">${s}</button>`).join('')}</div>
       <div class="grid-2c">
         <div class="fld"><label>Email</label><input value="${esc(l.email)}" onchange="updLead('${l.id}','email',this.value)"></div>
         <div class="fld"><label>Phone</label><input value="${esc(l.phone)}" onchange="updLead('${l.id}','phone',this.value)"></div>
