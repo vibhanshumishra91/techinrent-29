@@ -798,6 +798,7 @@ function sdrAttendance(){
   const hrs=rec&&rec.clockIn?(((rec.clockOut||Date.now())-rec.clockIn)/3600000).toFixed(1):'0.0';
   const hist=db.attendance.filter(a=>a.userId===u.id).sort((a,b)=>b.clockIn-a.clockIn).slice(0,14);
   const bms=breakMs(rec); const over=bms>BREAK_LIMIT; const pct=Math.min(100,bms/BREAK_LIMIT*100);
+  if(rec && over && onBreak(rec) && !rec.breakAlertSent) setTimeout(breakCheck,0); // let server notify the manager
   const breakBlock=(rec&&!rec.clockOut)?`
     <div style="margin-top:14px;padding:12px 14px;background:${over?'#fdecec':'#eef7ee'};border:1px solid ${over?'var(--red)':'var(--green)'};border-radius:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
@@ -1216,6 +1217,8 @@ function fmtDur(ms){ ms=Math.max(0,ms); const m=Math.floor(ms/60000), h=Math.flo
 function _applyRec(j){ if(j&&j.record){ const i=db.attendance.findIndex(a=>a.id===j.record.id); if(i>=0) db.attendance[i]=j.record; else db.attendance.unshift(j.record); save(); } }
 function startBreak(){ apiReq('/api/attendance','POST',{action:'break-start'}).then(j=>{ _applyRec(j); renderContent(); toast('Break started'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); }); }
 function endBreak(){ apiReq('/api/attendance','POST',{action:'break-end'}).then(j=>{ _applyRec(j); renderContent(); toast('Break ended'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); }); }
+/* Fire-and-forget: lets the server flag the manager if an active break passes 1h. */
+function breakCheck(){ if(!API_TOKEN) return; fetch('/api/attendance',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+API_TOKEN},body:JSON.stringify({action:'break-check'})}).then(r=>r.json()).then(j=>{ if(j&&j.record){ const i=db.attendance.findIndex(a=>a.id===j.record.id); if(i>=0){ db.attendance[i]=j.record; save(); } } }).catch(function(){}); }
 function submitDaily(){ const calls=+$('#dr-calls').value||0,meetings=+$('#dr-meet').value||0,summary=$('#dr-sum').value.trim(); const image=_drImg||null; apiReq('/api/reports','POST',{calls,meetings,summary,image}).then(j=>{ if(j.report) db.dailyReports.unshift(j.report); _drImg=null; save(); renderContent(); toast('Report submitted'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message==='Image too large — please use a smaller screenshot'?e.message:'Could not submit report'); }); }
 
 function saveSettings(){ db.settings={company:$('#set-company').value,currency:$('#set-cur').value,email:$('#set-email').value,phone:$('#set-phone').value}; logActivity('Updated CRM settings'); save(); toast('Settings saved'); }
