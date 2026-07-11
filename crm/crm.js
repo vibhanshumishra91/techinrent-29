@@ -287,7 +287,7 @@ const MANAGER_NAV=[
   {g:'Sales',items:[['bookings','📅','Demo Bookings'],['leads','🎯','Lead Management'],['pipeline','🔀','Sales Pipeline']]},
   {g:'Team',items:[['users','👥','SDR / Users'],['attendance','🕘','Attendance'],['dailyreports','🗒️','Daily Reports'],['leaverequests','🌴','Leave Requests'],['activity','📜','Activity Logs']]},
   {g:'Content',items:[['blog','📝','Blog Management'],['partners','🤝','Partners']]},
-  {g:'Insights',items:[['reports','📈','Reports & Analytics']]},
+  {g:'Insights',items:[['reports','📈','Reports & Analytics'],['revenue','💰','Sales Partner Revenue']]},
   {g:'System',items:[['profile','👤','My Profile'],['settings','⚙️','CRM Settings']]}
 ];
 const SDR_NAV=[
@@ -344,14 +344,14 @@ function toggleSidebar(){ S.sidebarOpen=!S.sidebarOpen; const sb=$('#sidebar'); 
 
 function renderContent(){
   const u=currentUser(); if(!u) return;
-  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',dailyreports:'SDR Daily Reports',leaverequests:'Leave Requests',activity:'Activity Logs',blog:'Blog Management',partners:'Partners & Clients',reports:'Reports & Analytics',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',leaves:'My Leave',performance:'My Performance',profile:'My Profile'};
+  const titles={dashboard:u.role==='manager'?'Dashboard':'My Dashboard',bookings:'Demo Bookings',leads:'Lead Management',pipeline:'Sales Pipeline',users:'SDR / User Management',attendance:u.role==='manager'?'Attendance Management':'Attendance & Time Tracking',dailyreports:'SDR Daily Reports',leaverequests:'Leave Requests',activity:'Activity Logs',blog:'Blog Management',partners:'Partners & Clients',reports:'Reports & Analytics',revenue:'Sales Partner Revenue',settings:'CRM Settings',myleads:'My Leads',daily:'Daily Activity Report',leaves:'My Leave',performance:'My Performance',profile:'My Profile'};
   const tt=$('#view-title'); if(tt) tt.textContent=titles[S.view]||'';
   const c=$('#content'); if(!c) return;
   const allowedSDR=['dashboard','myleads','attendance','daily','leaves','performance','profile'];
   if(u.role==='sdr' && !allowedSDR.includes(S.view)) S.view='dashboard';
   let html='';
   if(u.role==='manager'){
-    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,users:usersView,attendance:mgrAttendance,dailyreports:mgrDailyReports,leaverequests:mgrLeaveView,activity:activityView,blog:blogView,partners:partnersView,reports:reportsView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
+    html=({dashboard:mgrDashboard,bookings:bookingsView,leads:()=>leadsView(false),pipeline:pipelineView,users:usersView,attendance:mgrAttendance,dailyreports:mgrDailyReports,leaverequests:mgrLeaveView,activity:activityView,blog:blogView,partners:partnersView,reports:reportsView,revenue:revenueView,settings:settingsView,profile:profileView}[S.view]||mgrDashboard)();
   } else {
     html=({dashboard:sdrDashboard,myleads:()=>leadsView(true),attendance:sdrAttendance,daily:dailyView,leaves:leaveView,blog:blogView,performance:perfView,profile:profileView}[S.view]||sdrDashboard)();
   }
@@ -1059,6 +1059,59 @@ function savePartner(e,id){
   return false;
 }
 function deletePartner(id){ if(!confirm('Remove this partner?'))return; (async()=>{ try{ await apiReq('/api/partners','DELETE',{id}); loadPartners(); toast('Partner removed'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })(); }
+
+/* ---------- Sales Partner Revenue (manager-only) ---------- */
+let REVENUE=[];
+function revenueView(){ setTimeout(loadRevenue,0); return `<div id="rev-root"><div class="empty">Loading revenue…</div></div>`; }
+async function loadRevenue(){
+  const root=document.getElementById('rev-root'); if(!root) return;
+  try{ const j=await apiReq('/api/partners?resource=revenue','GET'); REVENUE=j.revenue||[]; root.innerHTML=revenueHTML(); }
+  catch(e){ if(e.message!=='unauth') root.innerHTML='<div class="panel"><div class="panel-b"><div class="empty">Could not load revenue.</div></div></div>'; }
+}
+function revenueHTML(){
+  const totalRev=REVENUE.reduce((a,r)=>a+(+r.revenue||0),0);
+  const totalCut=REVENUE.reduce((a,r)=>a+(+r.commission||0),0);
+  const rows=REVENUE.length?REVENUE.map(r=>`<tr>
+    <td class="nm">${esc(r.clientName)}</td>
+    <td>${esc(r.partner||'—')}</td>
+    <td>${esc(r.service||'—')}</td>
+    <td>${money(r.revenue)}</td>
+    <td>${(+r.percent||0)}%</td>
+    <td>${money(r.commission)}</td>
+    <td>${r.paymentDate?esc(r.paymentDate):'—'}</td>
+    <td><button class="btn btn-ghost btn-sm" onclick="openRevenueForm('${r.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteRevenue('${r.id}')">Del</button></td>
+  </tr>`).join(''):`<tr><td colspan="8"><div class="empty">No revenue entries yet. Add your first sales-partner deal.</div></td></tr>`;
+  return `<div class="toolbar"><p style="margin:0;color:var(--muted)">Revenue booked through sales partners — visible to managers only.</p><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="loadRevenue()">↻ Refresh</button><button class="btn btn-primary btn-sm" onclick="openRevenueForm()">+ Add Entry</button></div>
+  <div class="kpis" style="margin-bottom:14px">${kpi(REVENUE.length,'Deals','🤝')}${kpi(money(totalRev),'Total Revenue','💰')}${kpi(money(totalCut),'Partner Share','📊')}</div>
+  <div class="panel"><div class="table-scroll"><table class="tbl"><thead><tr><th>Client</th><th>Sales Partner</th><th>Service</th><th>Revenue</th><th>%</th><th>Partner Share</th><th>Payment Date</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
+function openRevenueForm(id){
+  const r=id?REVENUE.find(x=>x.id===id):null;
+  modal(`<div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-h"><h3>${r?'Edit revenue entry':'Add revenue entry'}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <form onsubmit="return saveRevenue(event,'${id||''}')"><div class="modal-b">
+      <div class="grid-2c">
+        <div class="fld"><label>Client name *</label><input id="rv-client" value="${r?esc(r.clientName):''}" required></div>
+        <div class="fld"><label>Sales partner</label><input id="rv-partner" value="${r?esc(r.partner||''):''}" placeholder="Partner name"></div>
+        <div class="fld"><label>Service taken</label><input id="rv-service" value="${r?esc(r.service||''):''}" placeholder="e.g. Lead Generation"></div>
+        <div class="fld"><label>Total revenue ($)</label><input id="rv-rev" type="number" min="0" step="0.01" value="${r?r.revenue:0}"></div>
+        <div class="fld"><label>Partner share (%)</label><input id="rv-pct" type="number" min="0" max="100" step="0.1" value="${r?r.percent:0}"></div>
+        <div class="fld"><label>Payment date</label><input id="rv-date" type="date" value="${r?esc(r.paymentDate||''):''}"></div>
+      </div>
+      <div class="fld"><label>Note (optional)</label><textarea id="rv-note" rows="2">${r?esc(r.note||''):''}</textarea></div>
+      <p class="t-meta">Partner share is auto-calculated as revenue × %.</p>
+    </div><div class="modal-f"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div></form>
+  </div>`);
+}
+function saveRevenue(e,id){
+  e.preventDefault();
+  const payload={ resource:'revenue', clientName:$('#rv-client').value.trim(), partner:$('#rv-partner').value.trim(), service:$('#rv-service').value.trim(), revenue:+$('#rv-rev').value||0, percent:+$('#rv-pct').value||0, paymentDate:$('#rv-date').value, note:$('#rv-note').value.trim() };
+  if(!payload.clientName){ toast('Client name is required'); return false; }
+  if(id) payload.id=id;
+  (async()=>{ try{ await apiReq('/api/partners', id?'PATCH':'POST', payload); closeModal(); loadRevenue(); toast('Saved'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })();
+  return false;
+}
+function deleteRevenue(id){ if(!confirm('Delete this revenue entry?'))return; (async()=>{ try{ await apiReq('/api/partners','DELETE',{resource:'revenue',id}); loadRevenue(); toast('Deleted'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })(); }
 
 function openNotifs(){
   const me=currentUser();
