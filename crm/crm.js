@@ -518,9 +518,9 @@ function mgrAttendance(){
   const sdrs=db.users.filter(u=>u.role==='sdr');
   const sel=S.attSdr||''; const t=todayStr();
   // Today status (all SDRs)
-  const todayRows=sdrs.map(u=>{ const rec=db.attendance.find(a=>a.userId===u.id&&a.date===t);
-    return `<tr><td class="nm">${esc(u.name)}</td><td>${rec?'<span class="tag tag-on">Present</span>':'<span class="tag tag-off">Absent</span>'}</td><td>${rec&&rec.clockIn?fmtT(rec.clockIn):'—'}</td><td>${rec&&rec.clockOut?fmtT(rec.clockOut):(rec?'<span class="t-meta">active</span>':'—')}</td><td>${rec?attHours(rec):'0.0'} h</td></tr>`;
-  }).join('')||`<tr><td colspan="5"><div class="empty">No SDRs yet.</div></td></tr>`;
+  const todayRows=sdrs.map(u=>{ const rec=db.attendance.find(a=>a.userId===u.id&&a.date===t); const bm=breakMs(rec); const bover=bm>BREAK_LIMIT;
+    return `<tr><td class="nm">${esc(u.name)}</td><td>${rec?'<span class="tag tag-on">Present</span>':'<span class="tag tag-off">Absent</span>'}</td><td>${rec&&rec.clockIn?fmtT(rec.clockIn):'—'}</td><td>${rec&&rec.clockOut?fmtT(rec.clockOut):(rec?'<span class="t-meta">active</span>':'—')}</td><td>${rec?attHours(rec):'0.0'} h</td><td class="${bover?'break-over':(bm>0?'break-ok':'')}">${rec?(fmtDur(bm)+(onBreak(rec)?' •':'')):'—'}</td></tr>`;
+  }).join('')||`<tr><td colspan="6"><div class="empty">No SDRs yet.</div></td></tr>`;
   // History (filtered by SDR)
   let recs=db.attendance.slice(); if(sel) recs=recs.filter(a=>a.userId===sel);
   recs.sort((a,b)=>(b.clockIn||0)-(a.clockIn||0));
@@ -543,7 +543,7 @@ function mgrAttendance(){
   </div>
   <div class="att-grid">
     <div>
-      ${sel?'':`<div class="panel"><div class="panel-h"><h3>Today — ${t}</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th></tr></thead><tbody>${todayRows}</tbody></table></div></div>`}
+      ${sel?'':`<div class="panel"><div class="panel-h"><h3>Today — ${t}</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Break (1h)</th></tr></thead><tbody>${todayRows}</tbody></table></div></div>`}
       <div class="panel"><div class="panel-h"><h3>${sel?esc(userName(sel))+' — record':'Attendance history'}</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>SDR</th><th>Date</th><th>Status</th><th>In</th><th>Out</th><th>Hours</th></tr></thead><tbody>${histRows}</tbody></table></div></div>
     </div>
     <div class="panel att-side"><div class="panel-h"><h3>Monthly totals</h3></div><div class="panel-b">${side}${sel?'':'<p class="t-meta" style="margin-top:10px">Pick an SDR above to see present vs absent per month.</p>'}</div></div>
@@ -797,11 +797,22 @@ function sdrAttendance(){
   const rec=db.attendance.find(a=>a.userId===u.id&&a.date===t);
   const hrs=rec&&rec.clockIn?(((rec.clockOut||Date.now())-rec.clockIn)/3600000).toFixed(1):'0.0';
   const hist=db.attendance.filter(a=>a.userId===u.id).sort((a,b)=>b.clockIn-a.clockIn).slice(0,14);
+  const bms=breakMs(rec); const over=bms>BREAK_LIMIT; const pct=Math.min(100,bms/BREAK_LIMIT*100);
+  const breakBlock=(rec&&!rec.clockOut)?`
+    <div style="margin-top:14px;padding:12px 14px;background:${over?'#fdecec':'#eef7ee'};border:1px solid ${over?'var(--red)':'var(--green)'};border-radius:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div>☕ <b>Break used today:</b> <span class="${over?'break-over':'break-ok'}">${fmtDur(bms)} / 1h</span>${over?' <b class="break-over">— over limit!</b>':''}</div>
+        ${onBreak(rec)?`<button class="btn btn-danger btn-sm" onclick="endBreak()">⏹ End Break</button>`:`<button class="btn btn-ghost btn-sm" onclick="startBreak()">☕ Take a Break</button>`}
+      </div>
+      <div class="break-bar"><span style="width:${pct}%;background:${over?'var(--red)':'var(--green)'}"></span></div>
+      ${onBreak(rec)?'<div class="t-meta break-over" style="margin-top:6px">You are on a break — tap “End Break” when you’re back.</div>':'<div class="t-meta" style="margin-top:6px">Up to 1 hour is fine (green). Beyond that turns red.</div>'}
+    </div>`:'';
   return `<div class="panel"><div class="panel-h"><h3>Time tracking — ${t}</h3></div><div class="panel-b">
-    <div class="kpis" style="margin-bottom:14px"><div class="kpi"><div class="v">${rec?'Yes':'No'}</div><div class="l">Clocked in</div></div><div class="kpi"><div class="v">${hrs} h</div><div class="l">Hours today</div></div><div class="kpi"><div class="v">${rec&&rec.clockIn?fmtT(rec.clockIn):'—'}</div><div class="l">Clock in</div></div><div class="kpi"><div class="v">${rec&&rec.clockOut?fmtT(rec.clockOut):'—'}</div><div class="l">Clock out</div></div></div>
+    <div class="kpis" style="margin-bottom:14px"><div class="kpi"><div class="v">${rec?'Yes':'No'}</div><div class="l">Clocked in</div></div><div class="kpi"><div class="v">${hrs} h</div><div class="l">Hours today</div></div><div class="kpi"><div class="v ${over?'break-over':(bms>0?'break-ok':'')}">${fmtDur(bms)}</div><div class="l">Break today</div></div><div class="kpi"><div class="v">${rec&&rec.clockOut?fmtT(rec.clockOut):'—'}</div><div class="l">Clock out</div></div></div>
     ${!rec?`<button class="btn btn-primary" onclick="clockIn()">🟢 Clock In</button>`:(!rec.clockOut?`<button class="btn btn-danger" onclick="clockOut()">🔴 Clock Out</button>`:`<span class="t-meta">You have completed today's shift.</span>`)}
+    ${breakBlock}
   </div></div>
-  <div class="panel"><div class="panel-h"><h3>My attendance history</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>Date</th><th>In</th><th>Out</th><th>Hours</th></tr></thead><tbody>${hist.map(a=>{const h=a.clockIn?(((a.clockOut||a.clockIn)-a.clockIn)/3600000).toFixed(1):'0.0';return `<tr><td>${a.date}</td><td>${a.clockIn?fmtT(a.clockIn):'—'}</td><td>${a.clockOut?fmtT(a.clockOut):'—'}</td><td>${h} h</td></tr>`;}).join('')||'<tr><td colspan="4"><div class="empty">No records.</div></td></tr>'}</tbody></table></div></div>`;
+  <div class="panel"><div class="panel-h"><h3>My attendance history</h3></div><div class="table-scroll"><table class="tbl"><thead><tr><th>Date</th><th>In</th><th>Out</th><th>Hours</th><th>Break</th></tr></thead><tbody>${hist.map(a=>{const h=a.clockIn?(((a.clockOut||a.clockIn)-a.clockIn)/3600000).toFixed(1):'0.0';const bm=breakMs(a);return `<tr><td>${a.date}</td><td>${a.clockIn?fmtT(a.clockIn):'—'}</td><td>${a.clockOut?fmtT(a.clockOut):'—'}</td><td>${h} h</td><td class="${bm>BREAK_LIMIT?'break-over':''}">${bm>0?fmtDur(bm):'—'}</td></tr>`;}).join('')||'<tr><td colspan="5"><div class="empty">No records.</div></td></tr>'}</tbody></table></div></div>`;
 }
 
 function dailyView(){
@@ -1060,58 +1071,81 @@ function savePartner(e,id){
 }
 function deletePartner(id){ if(!confirm('Remove this partner?'))return; (async()=>{ try{ await apiReq('/api/partners','DELETE',{id}); loadPartners(); toast('Partner removed'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })(); }
 
-/* ---------- Sales Partner Revenue (manager-only) ---------- */
+/* ---------- Client Payments & Reminders (manager-only) ---------- */
 let REVENUE=[];
-function revenueView(){ setTimeout(loadRevenue,0); return `<div id="rev-root"><div class="empty">Loading revenue…</div></div>`; }
+function revenueView(){ setTimeout(loadRevenue,0); return `<div id="rev-root"><div class="empty">Loading payments…</div></div>`; }
 async function loadRevenue(){
   const root=document.getElementById('rev-root'); if(!root) return;
   try{ const j=await apiReq('/api/partners?resource=revenue','GET'); REVENUE=j.revenue||[]; root.innerHTML=revenueHTML(); }
-  catch(e){ if(e.message!=='unauth') root.innerHTML='<div class="panel"><div class="panel-b"><div class="empty">Could not load revenue.</div></div></div>'; }
+  catch(e){ if(e.message!=='unauth') root.innerHTML='<div class="panel"><div class="panel-b"><div class="empty">Could not load payments.</div></div></div>'; }
+}
+function dueInfo(r){
+  if(!r.nextDueTs) return {cls:'',label:'—'};
+  const days=Math.ceil((r.nextDueTs-Date.now())/86400000);
+  if(days<0) return {cls:'due-over',label:esc(r.nextDue)+' · overdue'};
+  if(days<=7) return {cls:'due-soon',label:esc(r.nextDue)+' · '+(days===0?'due today':'in '+days+'d')};
+  return {cls:'',label:esc(r.nextDue)};
 }
 function revenueHTML(){
-  const totalRev=REVENUE.reduce((a,r)=>a+(+r.revenue||0),0);
-  const totalCut=REVENUE.reduce((a,r)=>a+(+r.commission||0),0);
-  const rows=REVENUE.length?REVENUE.map(r=>`<tr>
+  const totalAmt=REVENUE.reduce((a,r)=>a+(+r.amount||0),0);
+  const totalInv=REVENUE.reduce((a,r)=>a+(+r.invested||0),0);
+  const totalProfit=REVENUE.reduce((a,r)=>a+(+r.profit||0),0);
+  const due=REVENUE.filter(r=>r.nextDueTs && (r.nextDueTs-Date.now())/86400000 <= 7).sort((a,b)=>a.nextDueTs-b.nextDueTs);
+  const reminders=due.length?`<div class="panel" style="margin-bottom:14px;border-color:#f0b429">
+    <div class="panel-h"><h3>⏰ Payment reminders (${due.length})</h3></div>
+    <div class="panel-b">${due.map(r=>{const d=dueInfo(r);return `<div class="reminder-row"><span class="${d.cls}">●</span> <b>${esc(r.clientName)}</b>${r.company?(' · '+esc(r.company)):''} — <b>${money(r.amount)}</b> due <span class="${d.cls}">${d.label}</span> <button class="btn btn-ghost btn-sm" onclick="markPaidNextMonth('${r.id}')">✓ Received → next month</button></div>`;}).join('')}</div></div>`:'';
+  const rows=REVENUE.length?REVENUE.map(r=>{const d=dueInfo(r);return `<tr>
     <td class="nm">${esc(r.clientName)}</td>
-    <td>${esc(r.partner||'—')}</td>
-    <td>${esc(r.service||'—')}</td>
-    <td>${money(r.revenue)}</td>
-    <td>${(+r.percent||0)}%</td>
-    <td>${money(r.commission)}</td>
-    <td>${r.paymentDate?esc(r.paymentDate):'—'}</td>
+    <td>${esc(r.company||'—')}</td>
+    <td>${esc(r.purpose||'—')}</td>
+    <td>${money(r.amount)}</td>
+    <td>${money(r.invested)}</td>
+    <td style="color:${(+r.profit||0)>=0?'var(--green)':'var(--red)'};font-weight:700">${money(r.profit)}</td>
+    <td><span class="${d.cls}">${d.label}</span></td>
     <td><button class="btn btn-ghost btn-sm" onclick="openRevenueForm('${r.id}')">Edit</button> <button class="btn btn-danger btn-sm" onclick="deleteRevenue('${r.id}')">Del</button></td>
-  </tr>`).join(''):`<tr><td colspan="8"><div class="empty">No revenue entries yet. Add your first sales-partner deal.</div></td></tr>`;
-  return `<div class="toolbar"><p style="margin:0;color:var(--muted)">Revenue booked through sales partners — visible to managers only.</p><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="loadRevenue()">↻ Refresh</button><button class="btn btn-primary btn-sm" onclick="openRevenueForm()">+ Add Entry</button></div>
-  <div class="kpis" style="margin-bottom:14px">${kpi(REVENUE.length,'Deals','🤝')}${kpi(money(totalRev),'Total Revenue','💰')}${kpi(money(totalCut),'Partner Share','📊')}</div>
-  <div class="panel"><div class="table-scroll"><table class="tbl"><thead><tr><th>Client</th><th>Sales Partner</th><th>Service</th><th>Revenue</th><th>%</th><th>Partner Share</th><th>Payment Date</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  </tr>`;}).join(''):`<tr><td colspan="8"><div class="empty">No payments recorded yet. Click “+ Add Payment”.</div></td></tr>`;
+  return `<div class="toolbar"><p style="margin:0;color:var(--muted)">Client payments, profit &amp; monthly reminders — managers only.</p><div class="spacer"></div><button class="btn btn-ghost btn-sm" onclick="loadRevenue()">↻ Refresh</button><button class="btn btn-primary btn-sm" onclick="openRevenueForm()">+ Add Payment</button></div>
+  ${reminders}
+  <div class="kpis" style="margin-bottom:14px">${kpi(money(totalAmt),'Total Received','💰')}${kpi(money(totalInv),'Total Invested','📉')}${kpi(money(totalProfit),'Total Profit','📈')}${kpi(due.length,'Due Soon','⏰')}</div>
+  <div class="panel"><div class="table-scroll"><table class="tbl"><thead><tr><th>Client</th><th>Company</th><th>Purpose</th><th>Amount</th><th>Invested</th><th>Profit</th><th>Next payment</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 function openRevenueForm(id){
   const r=id?REVENUE.find(x=>x.id===id):null;
   modal(`<div class="modal" onclick="event.stopPropagation()">
-    <div class="modal-h"><h3>${r?'Edit revenue entry':'Add revenue entry'}</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="modal-h"><h3>${r?'Edit payment':'Add client payment'}</h3><button class="x" onclick="closeModal()">×</button></div>
     <form onsubmit="return saveRevenue(event,'${id||''}')"><div class="modal-b">
       <div class="grid-2c">
         <div class="fld"><label>Client name *</label><input id="rv-client" value="${r?esc(r.clientName):''}" required></div>
-        <div class="fld"><label>Sales partner</label><input id="rv-partner" value="${r?esc(r.partner||''):''}" placeholder="Partner name"></div>
-        <div class="fld"><label>Service taken</label><input id="rv-service" value="${r?esc(r.service||''):''}" placeholder="e.g. Lead Generation"></div>
-        <div class="fld"><label>Total revenue ($)</label><input id="rv-rev" type="number" min="0" step="0.01" value="${r?r.revenue:0}"></div>
-        <div class="fld"><label>Partner share (%)</label><input id="rv-pct" type="number" min="0" max="100" step="0.1" value="${r?r.percent:0}"></div>
-        <div class="fld"><label>Payment date</label><input id="rv-date" type="date" value="${r?esc(r.paymentDate||''):''}"></div>
+        <div class="fld"><label>Company</label><input id="rv-company" value="${r?esc(r.company||''):''}"></div>
       </div>
+      <div class="fld"><label>Purpose</label><input id="rv-purpose" value="${r?esc(r.purpose||''):''}" placeholder="e.g. LinkedIn lead generation — monthly retainer"></div>
+      <div class="grid-2c">
+        <div class="fld"><label>Amount received ($)</label><input id="rv-amount" type="number" step="0.01" value="${r?r.amount:0}" oninput="rvProfit()"></div>
+        <div class="fld"><label>Invested ($)</label><input id="rv-invested" type="number" step="0.01" value="${r?r.invested:0}" oninput="rvProfit()"></div>
+      </div>
+      <div class="fld"><label>Next payment reminder (for monthly clients)</label><input id="rv-due" type="date" value="${r?esc(r.nextDue||''):''}"></div>
       <div class="fld"><label>Note (optional)</label><textarea id="rv-note" rows="2">${r?esc(r.note||''):''}</textarea></div>
-      <p class="t-meta">Partner share is auto-calculated as revenue × %.</p>
+      <p class="t-meta">Profit = amount − invested (auto): <b id="rv-profit-preview">${money((r?((+r.amount||0)-(+r.invested||0)):0))}</b></p>
     </div><div class="modal-f"><button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div></form>
   </div>`);
 }
+function rvProfit(){ const p=(+$('#rv-amount').value||0)-(+$('#rv-invested').value||0); const el=$('#rv-profit-preview'); if(el) el.textContent=money(p); }
 function saveRevenue(e,id){
   e.preventDefault();
-  const payload={ resource:'revenue', clientName:$('#rv-client').value.trim(), partner:$('#rv-partner').value.trim(), service:$('#rv-service').value.trim(), revenue:+$('#rv-rev').value||0, percent:+$('#rv-pct').value||0, paymentDate:$('#rv-date').value, note:$('#rv-note').value.trim() };
+  const payload={ resource:'revenue', clientName:$('#rv-client').value.trim(), company:$('#rv-company').value.trim(), purpose:$('#rv-purpose').value.trim(), amount:+$('#rv-amount').value||0, invested:+$('#rv-invested').value||0, nextDue:$('#rv-due').value, note:$('#rv-note').value.trim() };
   if(!payload.clientName){ toast('Client name is required'); return false; }
   if(id) payload.id=id;
   (async()=>{ try{ await apiReq('/api/partners', id?'PATCH':'POST', payload); closeModal(); loadRevenue(); toast('Saved'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })();
   return false;
 }
-function deleteRevenue(id){ if(!confirm('Delete this revenue entry?'))return; (async()=>{ try{ await apiReq('/api/partners','DELETE',{resource:'revenue',id}); loadRevenue(); toast('Deleted'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })(); }
+function markPaidNextMonth(id){
+  const r=REVENUE.find(x=>x.id===id); if(!r) return;
+  const base=r.nextDueTs?new Date(r.nextDueTs):new Date();
+  const nd=new Date(base.getFullYear(), base.getMonth()+1, base.getDate());
+  const nextDue=nd.toISOString().slice(0,10);
+  apiReq('/api/partners','PATCH',{resource:'revenue',id,nextDue}).then(()=>{ loadRevenue(); toast('Reminder moved to '+nextDue); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); });
+}
+function deleteRevenue(id){ if(!confirm('Delete this payment entry?'))return; (async()=>{ try{ await apiReq('/api/partners','DELETE',{resource:'revenue',id}); loadRevenue(); toast('Deleted'); }catch(err){ if(err.message!=='unauth') toast(err.message); } })(); }
 
 function openNotifs(){
   const me=currentUser();
@@ -1174,6 +1208,14 @@ function deleteUser(id){
 
 function clockIn(){ apiReq('/api/attendance','POST',{action:'in'}).then(j=>{ if(j.record) db.attendance.unshift(j.record); save(); renderContent(); toast('Clocked in'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); }); }
 function clockOut(){ apiReq('/api/attendance','POST',{action:'out'}).then(j=>{ if(j.record){ const i=db.attendance.findIndex(a=>a.id===j.record.id); if(i>=0) db.attendance[i]=j.record; else db.attendance.unshift(j.record); save(); } renderContent(); toast('Clocked out'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); }); }
+/* ---------- Breaks (1h allowance: green within, red over) ---------- */
+const BREAK_LIMIT=3600000; // 1 hour
+function breakMs(rec){ if(!rec||!rec.breaks) return 0; return rec.breaks.reduce((a,br)=>a+((br.end||Date.now())-br.start),0); }
+function onBreak(rec){ return !!(rec&&rec.breaks&&rec.breaks.some(br=>!br.end)); }
+function fmtDur(ms){ ms=Math.max(0,ms); const m=Math.floor(ms/60000), h=Math.floor(m/60); return h>0?(h+'h '+(m%60)+'m'):(m+'m'); }
+function _applyRec(j){ if(j&&j.record){ const i=db.attendance.findIndex(a=>a.id===j.record.id); if(i>=0) db.attendance[i]=j.record; else db.attendance.unshift(j.record); save(); } }
+function startBreak(){ apiReq('/api/attendance','POST',{action:'break-start'}).then(j=>{ _applyRec(j); renderContent(); toast('Break started'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); }); }
+function endBreak(){ apiReq('/api/attendance','POST',{action:'break-end'}).then(j=>{ _applyRec(j); renderContent(); toast('Break ended'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message); }); }
 function submitDaily(){ const calls=+$('#dr-calls').value||0,meetings=+$('#dr-meet').value||0,summary=$('#dr-sum').value.trim(); const image=_drImg||null; apiReq('/api/reports','POST',{calls,meetings,summary,image}).then(j=>{ if(j.report) db.dailyReports.unshift(j.report); _drImg=null; save(); renderContent(); toast('Report submitted'); }).catch(e=>{ if(e.message!=='unauth') toast(e.message==='Image too large — please use a smaller screenshot'?e.message:'Could not submit report'); }); }
 
 function saveSettings(){ db.settings={company:$('#set-company').value,currency:$('#set-cur').value,email:$('#set-email').value,phone:$('#set-phone').value}; logActivity('Updated CRM settings'); save(); toast('Settings saved'); }

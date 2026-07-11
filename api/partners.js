@@ -22,7 +22,7 @@ module.exports = async (req, res) => {
       if (!mgr) return res.status(401).json({ error: 'Unauthorized' });
 
       if (req.method === 'GET') {
-        const rows = (await crm.list('revenue')).sort((a, b) => (b.paymentTs || b.createdAt || 0) - (a.paymentTs || a.createdAt || 0));
+        const rows = (await crm.list('revenue')).sort((a, b) => (a.nextDueTs || 8.64e15) - (b.nextDueTs || 8.64e15));
         return res.status(200).json({ revenue: rows });
       }
       if (req.method === 'POST' || req.method === 'PATCH') {
@@ -32,16 +32,16 @@ module.exports = async (req, res) => {
         if (editing && !cur) return res.status(404).json({ error: 'Entry not found' });
         const clientName = rb.clientName !== undefined ? String(rb.clientName).trim() : (cur && cur.clientName) || '';
         if (!clientName) return res.status(400).json({ error: 'Client name is required' });
-        const revenue = rb.revenue !== undefined ? (+rb.revenue || 0) : (cur ? cur.revenue : 0);
-        const percent = rb.percent !== undefined ? Math.max(0, Math.min(100, +rb.percent || 0)) : (cur ? cur.percent : 0);
-        const paymentDate = rb.paymentDate !== undefined ? String(rb.paymentDate).slice(0, 10) : (cur ? cur.paymentDate : '');
+        const amount = rb.amount !== undefined ? (+rb.amount || 0) : (cur ? cur.amount : 0);
+        const invested = rb.invested !== undefined ? (+rb.invested || 0) : (cur ? cur.invested : 0);
+        const nextDue = rb.nextDue !== undefined ? String(rb.nextDue).slice(0, 10) : (cur ? cur.nextDue : '');
         const rec = {
           id: editing ? cur.id : crm.rid('rv'),
-          partner: (rb.partner !== undefined ? String(rb.partner) : (cur && cur.partner) || '').slice(0, 120),
           clientName: clientName.slice(0, 120),
-          service: (rb.service !== undefined ? String(rb.service) : (cur && cur.service) || '').slice(0, 120),
-          revenue, percent, commission: Math.round(revenue * percent) / 100,
-          paymentDate, paymentTs: paymentDate ? new Date(paymentDate).getTime() : (cur ? cur.paymentTs : Date.now()),
+          company: (rb.company !== undefined ? String(rb.company) : (cur && cur.company) || '').slice(0, 120),
+          purpose: (rb.purpose !== undefined ? String(rb.purpose) : (cur && cur.purpose) || '').slice(0, 200),
+          amount, invested, profit: Math.round((amount - invested) * 100) / 100,
+          nextDue, nextDueTs: nextDue ? new Date(nextDue).getTime() : null,
           note: (rb.note !== undefined ? String(rb.note) : (cur && cur.note) || '').slice(0, 300),
           createdAt: editing ? cur.createdAt : Date.now(),
         };
